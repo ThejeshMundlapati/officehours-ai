@@ -22,6 +22,12 @@ export default defineConfig({
   testMatch: '**/*.spec.ts',
   timeout: 30_000,
   retries: 0,
+  // One worker: these specs share a small test-account pool AND a single global
+  // queue (positions/stats are app-wide), so running spec files in parallel lets
+  // one test's "Leave"/reset mutate another's live question. Serial execution
+  // keeps the shared backend state deterministic. Scale out later with more test
+  // accounts + per-suite `--port` sharding if speed matters.
+  workers: 1,
   use: {
     baseURL: BASE_URL,
     headless: true,

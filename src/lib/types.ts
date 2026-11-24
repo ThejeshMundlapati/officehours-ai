@@ -11,6 +11,12 @@ export type QuestionStatus = 'waiting' | 'ai_answered' | 'claimed' | 'solved' | 
 /** Statuses that count as "still in the queue". A student may hold at most one. */
 export const QUESTION_OPEN_STATUSES: QuestionStatus[] = ['waiting', 'ai_answered', 'claimed']
 
+/**
+ * Statuses that are "in line" — awaiting a TA and therefore ranked. A claimed
+ * question is being handled, so it is open but NOT in line (position 0).
+ */
+export const QUESTION_IN_LINE_STATUSES: QuestionStatus[] = ['waiting', 'ai_answered']
+
 export const TITLE_MAX = 200
 export const BODY_MAX = 5000
 export const TOPIC_MAX = 100
@@ -28,6 +34,8 @@ export interface Question {
   body: string
   topic: string
   status: QuestionStatus
+  /** Student display name, snapshotted server-side from the users record. */
+  studentName: string
   /** userId of the TA who claimed it, or '' while unclaimed. */
   claimedBy: string
   /** Duplicate-group id (populated in a later phase), or ''. */
@@ -38,6 +46,13 @@ export interface Question {
   /** Snapshot of staff userIds (collaboratorsField) so TAs can read it. */
   collaborators: string[]
   createdAt: string
+}
+
+/** Public queue counters. Single record, recordId 'global'. */
+export interface QueueStats {
+  [key: string]: unknown
+  waitingCount: number
+  updatedAt: string
 }
 
 /** User-defined fields of a `staff` record. recordId === userId. */

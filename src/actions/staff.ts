@@ -14,6 +14,7 @@ import { isAnonymousUserId, resolveAppRole } from 'deepspace/worker'
 import type { ActionHandler, ActionTools } from 'deepspace/worker'
 import type { Env } from '../../worker'
 import { QUESTION_OPEN_STATUSES, type Question, type Staff } from '../lib/types'
+import { recomputeQueue, queueStoreFromTools } from './queue'
 
 const SETTINGS_INVITE_KEY = 'ta_invite_code'
 // Unambiguous alphabet (no 0/O/1/I/L). 32 chars divides 256 evenly → no modulo bias.
@@ -37,6 +38,13 @@ async function isAdmin(env: Env, userId: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/** True only if the caller's users-record email ends with '@deepspace.test'. */
+async function isTestAccount(tools: ActionTools, userId: string): Promise<boolean> {
+  const row = await tools.get<{ email?: string }>('users', userId)
+  const email = row.success ? asString(row.data.record.data.email).toLowerCase() : ''
+  return email.endsWith('@deepspace.test')
 }
 
 async function readInviteCode(tools: ActionTools): Promise<string> {
@@ -138,6 +146,9 @@ const devGetInviteCode: ActionHandler<Env> = async ({ userId, tools, env }) => {
     return { success: false, code: 'not_available', error: 'Not available.' }
   }
   if (isAnonymousUserId(userId)) return { success: false, code: 'anonymous', error: 'Sign in first.' }
+  if (!(await isTestAccount(tools, userId))) {
+    return { success: false, code: 'not_available', error: 'Not available.' }
+  }
   let code = await readInviteCode(tools)
   if (!code) {
     code = generateInviteCode()
@@ -152,8 +163,40 @@ const devLeaveStaff: ActionHandler<Env> = async ({ userId, tools, env }) => {
     return { success: false, code: 'not_available', error: 'Not available.' }
   }
   if (isAnonymousUserId(userId)) return { success: false, code: 'anonymous', error: 'Sign in first.' }
+  if (!(await isTestAccount(tools, userId))) {
+    return { success: false, code: 'not_available', error: 'Not available.' }
+  }
   await doRemoveStaff(tools, userId)
   return { success: true, data: { userId } }
+}
+
+/**
+ * devResetQueue() — leave every open question so a test starts from an empty
+ * global queue (positions are global, so stale rows from prior runs would skew
+ * absolute-position assertions). Same flag + @deepspace.test gate.
+ */
+const devResetQueue: ActionHandler<Env> = async ({ userId, tools, env }) => {
+  if (env.ALLOW_DEBUG_ROUTES !== 'true') {
+    return { success: false, code: 'not_available', error: 'Not available.' }
+  }
+  if (isAnonymousUserId(userId)) return { success: false, code: 'anonymous', error: 'Sign in first.' }
+  if (!(await isTestAccount(tools, userId))) {
+    return { success: false, code: 'not_available', error: 'Not available.' }
+  }
+  const res = await tools.query<Question>('questions', { limit: 500 })
+  if (res.success) {
+    for (const r of res.data.records) {
+      if (QUESTION_OPEN_STATUSES.includes(r.data.status)) {
+        await tools.update<Question>('questions', r.recordId, {
+          status: 'left',
+          queuePosition: 0,
+          peopleAhead: 0,
+        })
+      }
+    }
+  }
+  await recomputeQueue(queueStoreFromTools(tools))
+  return { success: true, data: {} }
 }
 
 export const staffActions: Record<string, ActionHandler<Env>> = {
@@ -162,4 +205,5 @@ export const staffActions: Record<string, ActionHandler<Env>> = {
   removeStaff,
   devGetInviteCode,
   devLeaveStaff,
+  devResetQueue,
 }

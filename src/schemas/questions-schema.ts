@@ -23,6 +23,7 @@ export const questionsSchema: CollectionSchema = {
     { name: 'title', storage: 'text', interpretation: 'plain', required: true, maxLength: 200 },
     { name: 'body', storage: 'text', interpretation: 'plain', required: true, maxLength: 5000 },
     { name: 'topic', storage: 'text', interpretation: 'plain', maxLength: 100 },
+    { name: 'studentName', storage: 'text', interpretation: 'plain' },
     {
       name: 'status',
       storage: 'text',

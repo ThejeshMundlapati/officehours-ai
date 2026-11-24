@@ -16,8 +16,10 @@ import {
   BODY_MAX,
   TOPIC_MAX,
   type Question,
+  type QuestionStatus,
   type Staff,
 } from '../lib/types'
+import { recomputeQueue, queueStoreFromTools } from './queue'
 
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
@@ -56,12 +58,20 @@ const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools }) => 
   const staff = await tools.query<Staff>('staff')
   const collaborators = staff.success ? staff.data.records.map((r) => r.recordId) : []
 
+  // Snapshot the student's display name from their users record — never params.
+  const userRow = await tools.get<{ name?: string; email?: string }>('users', userId)
+  const studentName =
+    (userRow.success
+      ? asString(userRow.data.record.data.name) || asString(userRow.data.record.data.email)
+      : '') || 'Student'
+
   const created = await tools.create<Question>('questions', {
     studentId: userId,
     title,
     body,
     topic,
     status: 'waiting',
+    studentName,
     claimedBy: '',
     groupId: '',
     queuePosition: 0,
@@ -71,6 +81,7 @@ const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools }) => 
   })
   if (!created.success) return created
 
+  await recomputeQueue(queueStoreFromTools(tools))
   return { success: true, data: { recordId: created.data.recordId } }
 }
 
@@ -95,10 +106,21 @@ const leaveQueue: ActionHandler<Env> = async ({ userId, params, tools }) => {
   if (got.data.record.data.studentId !== userId) {
     return { success: false, code: 'forbidden', error: 'You can only leave your own question.' }
   }
+  const currentStatus = got.data.record.data.status as QuestionStatus
+  if (!QUESTION_OPEN_STATUSES.includes(currentStatus)) {
+    return { success: false, code: 'not_open', error: 'This question is not in the queue.' }
+  }
 
-  const updated = await tools.update<Question>('questions', questionId, { status: 'left' })
+  // Zero this row's position as it leaves the line — recompute only (re)ranks
+  // the remaining in-line questions, it never rescans departed ones.
+  const updated = await tools.update<Question>('questions', questionId, {
+    status: 'left',
+    queuePosition: 0,
+    peopleAhead: 0,
+  })
   if (!updated.success) return updated
 
+  await recomputeQueue(queueStoreFromTools(tools))
   return { success: true, data: { recordId: questionId } }
 }
 

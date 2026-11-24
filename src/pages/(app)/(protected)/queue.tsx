@@ -21,6 +21,7 @@ import {
   TOPIC_MAX,
   type Question,
   type QuestionStatus,
+  type QueueStats,
 } from '@/lib/types'
 
 const STATUS_LABEL: Record<QuestionStatus, string> = {
@@ -38,8 +39,11 @@ export default function QueuePage() {
   // Memoize so the subscription isn't torn down and rebuilt every render.
   const queryOptions = useMemo(() => ({ where: { studentId: myId } }), [myId])
   const { records, status } = useQuery<Question>('questions', queryOptions)
+  const { records: statsRecords } = useQuery<QueueStats>('queue_stats')
   const { ready } = useMutations<Question>('questions')
   const toast = useToast()
+
+  const waitingCount = Number(statsRecords.find((r) => r.recordId === 'global')?.data.waitingCount ?? 0)
 
   const [title, setTitle] = useState('')
   const [topic, setTopic] = useState('')
@@ -84,8 +88,11 @@ export default function QueuePage() {
     <div data-testid="queue-page" className="min-h-full text-foreground">
       <div className="mx-auto max-w-2xl px-6 py-16">
         <h1 className="mb-2 text-3xl font-bold tracking-tight">Office hours queue</h1>
-        <p className="mb-10 text-sm text-muted-foreground">
+        <p className="mb-1 text-sm text-muted-foreground">
           Ask one question at a time. You&rsquo;ll see its status update live.
+        </p>
+        <p data-testid="waiting-count" className="mb-10 text-sm text-muted-foreground">
+          {waitingCount} student{waitingCount === 1 ? '' : 's'} waiting
         </p>
 
         {status === 'loading' ? (
@@ -105,6 +112,19 @@ export default function QueuePage() {
                   </h2>
                   <Badge data-testid="open-question-status">{STATUS_LABEL[open.data.status]}</Badge>
                 </div>
+                {open.data.status === 'claimed' ? (
+                  <p data-testid="queue-position" className="mb-3 text-sm font-medium text-foreground">
+                    A TA is with you.
+                  </p>
+                ) : Number(open.data.queuePosition) > 0 ? (
+                  <p data-testid="queue-position" className="mb-3 text-sm font-medium text-foreground">
+                    You&rsquo;re #{Number(open.data.queuePosition)} — {Number(open.data.peopleAhead) || 0} ahead of you
+                  </p>
+                ) : (
+                  <p data-testid="queue-position" className="mb-3 text-sm font-medium text-foreground">
+                    Finding your place in line&hellip;
+                  </p>
+                )}
                 {open.data.topic ? (
                   <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">
                     {open.data.topic}
@@ -203,6 +223,7 @@ function DevTools({ role }: { role: string }) {
         body: 'probe',
         topic: '',
         status: 'waiting',
+        studentName: 'probe',
         claimedBy: '',
         groupId: '',
         queuePosition: 0,

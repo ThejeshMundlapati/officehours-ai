@@ -98,7 +98,11 @@ export default function TaQueuePage() {
                       <h2 className="font-semibold">{r.data.title}</h2>
                       <Badge>{STATUS_LABEL[r.data.status]}</Badge>
                     </div>
-                    <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                    <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span data-testid="ta-student-name" className="font-medium text-foreground">
+                        {String(r.data.studentName || 'Student')}
+                      </span>
+                      <span data-testid="ta-position">#{Number(r.data.queuePosition) || 0}</span>
                       {r.data.topic ? (
                         <span className="uppercase tracking-wide">{r.data.topic}</span>
                       ) : null}
