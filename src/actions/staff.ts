@@ -16,6 +16,8 @@ import type { Env } from '../../worker'
 import type { Question, Staff } from '../lib/types'
 import { recomputeQueue, queueStoreFromTools, listOpenQuestions } from './queue'
 import { isAdmin, isTestAccount } from './auth'
+import { closeClaimIfAny, releaseClaimsForTa } from './claims'
+import { releaseActiveSlot } from './active'
 
 const SETTINGS_INVITE_KEY = 'ta_invite_code'
 // Unambiguous alphabet (no 0/O/1/I/L). 32 chars divides 256 evenly → no modulo bias.
@@ -62,6 +64,9 @@ async function mutateOpenCollaborators(
 }
 
 async function doRemoveStaff(tools: ActionTools, userId: string): Promise<void> {
+  // Release their active claims FIRST so those students go back in line
+  // (at their original rank) before the TA loses read access to the rows.
+  await releaseClaimsForTa(tools, userId)
   await tools.remove('staff', userId)
   await mutateOpenCollaborators(tools, userId, 'remove')
 }
@@ -172,6 +177,8 @@ const devResetQueue: ActionHandler<Env> = async ({ userId, tools, env }) => {
       queuePosition: 0,
       peopleAhead: 0,
     })
+    if (r.data.status === 'claimed') await closeClaimIfAny(tools, r.recordId)
+    await releaseActiveSlot(tools, r.data.studentId)
   }
   await recomputeQueue(queueStoreFromTools(tools))
   return { success: true, data: {} }

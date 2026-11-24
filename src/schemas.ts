@@ -14,6 +14,8 @@ import { questionsSchema } from './schemas/questions-schema'
 import { staffSchema } from './schemas/staff-schema'
 import { queueStatsSchema } from './schemas/queue-stats-schema'
 import { materialsSchema } from './schemas/materials-schema'
+import { claimsSchema } from './schemas/claims-schema'
+import { activeQuestionsSchema } from './schemas/active-questions-schema'
 
 export const schemas: CollectionSchema[] = [
   usersSchema,
@@ -22,4 +24,6 @@ export const schemas: CollectionSchema[] = [
   staffSchema,
   queueStatsSchema,
   materialsSchema,
+  claimsSchema,
+  activeQuestionsSchema,
 ]

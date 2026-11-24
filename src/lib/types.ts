@@ -38,6 +38,8 @@ export interface Question {
   studentName: string
   /** userId of the TA who claimed it, or '' while unclaimed. */
   claimedBy: string
+  /** Claiming TA's display name, snapshotted server-side. */
+  claimedByName?: string
   /** Duplicate-group id (populated in a later phase), or ''. */
   groupId: string
   /** Live position fields maintained server-side (later phase). */
@@ -106,6 +108,17 @@ export interface MaterialSearchHit {
   filename: string
   score: number
   excerpt: string
+}
+
+/** User-defined fields of a `claims` record (admin-only). */
+export interface Claim {
+  [key: string]: unknown
+  questionId: string
+  taId: string
+  taName: string
+  /** 1 while active, 0 once resolved (kept as history). */
+  active: number
+  createdAt: string
 }
 
 /** User-defined fields of a `staff` record. recordId === userId. */

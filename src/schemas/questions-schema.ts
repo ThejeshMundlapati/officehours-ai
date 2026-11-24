@@ -31,6 +31,7 @@ export const questionsSchema: CollectionSchema = {
       required: true,
     },
     { name: 'claimedBy', storage: 'text', interpretation: 'plain' },
+    { name: 'claimedByName', storage: 'text', interpretation: 'plain' },
     { name: 'groupId', storage: 'text', interpretation: 'plain' },
     { name: 'queuePosition', storage: 'number', interpretation: 'plain' },
     { name: 'peopleAhead', storage: 'number', interpretation: 'plain' },

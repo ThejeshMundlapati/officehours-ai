@@ -22,6 +22,8 @@ import {
 import { recomputeQueue, queueStoreFromTools } from './queue'
 import { ANSWER_JOB_TYPE } from './answer'
 import { isDevTestCaller } from './auth'
+import { closeClaimIfAny } from './claims'
+import { acquireActiveSlot, bindActiveSlot, dropSlotById, releaseActiveSlot } from './active'
 
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
@@ -48,12 +50,21 @@ const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools, env }
     return { success: false, code: 'invalid_input', error: `Topic must be at most ${TOPIC_MAX} characters.` }
   }
 
-  // One open question per student.
-  const mine = await tools.query<Question>('questions', { where: { studentId: userId } })
-  if (!mine.success) return mine
-  const hasOpen = mine.data.records.some((r) => QUESTION_OPEN_STATUSES.includes(r.data.status))
-  if (hasOpen) {
-    return { success: false, code: 'already_open', error: 'You already have an open question in the queue.' }
+  // One open question per student — ATOMIC: the active_questions slot
+  // (uniqueOn studentId) is inserted FIRST, so concurrent submits can't both pass.
+  const ALREADY_OPEN = { success: false as const, code: 'already_open', error: 'You already have an open question in the queue.' }
+  const slot = await acquireActiveSlot(tools, userId)
+  if (!slot.ok) return slot.reason === 'already_open' ? ALREADY_OPEN : { success: false, error: slot.error }
+
+  // Backfill guard for questions opened before slots existed: one equality
+  // query per open status (never the student's full history). If one is
+  // found, bind the slot to it so future checks are slot-only.
+  for (const status of QUESTION_OPEN_STATUSES) {
+    const open = await tools.query<Question>('questions', { where: { studentId: userId, status }, limit: 1 })
+    if (open.success && open.data.records.length > 0) {
+      await bindActiveSlot(tools, slot.slotId, open.data.records[0].recordId)
+      return ALREADY_OPEN
+    }
   }
 
   // Snapshot current staff ids into collaborators so TAs can read this row.
@@ -89,8 +100,12 @@ const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools, env }
     aiFeedback: '',
     aiReason: '',
   })
-  if (!created.success) return created
+  if (!created.success) {
+    await dropSlotById(tools, slot.slotId)
+    return created
+  }
   const questionId = created.data.recordId
+  await bindActiveSlot(tools, slot.slotId, questionId)
 
   await recomputeQueue(queueStoreFromTools(tools))
 
@@ -143,6 +158,8 @@ const leaveQueue: ActionHandler<Env> = async ({ userId, params, tools }) => {
     peopleAhead: 0,
   })
   if (!updated.success) return updated
+  if (currentStatus === 'claimed') await closeClaimIfAny(tools, questionId)
+  await releaseActiveSlot(tools, userId)
 
   await recomputeQueue(queueStoreFromTools(tools))
   return { success: true, data: { recordId: questionId } }
@@ -186,6 +203,8 @@ const markSolved: ActionHandler<Env> = async ({ userId, params, tools }) => {
     peopleAhead: 0,
   })
   if (!updated.success) return updated
+  if (q.data.status === 'claimed') await closeClaimIfAny(tools, q.id)
+  await releaseActiveSlot(tools, userId)
   await recomputeQueue(queueStoreFromTools(tools))
   return { success: true, data: { recordId: q.id } }
 }

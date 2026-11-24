@@ -14,6 +14,7 @@ import { useMemo, useState, type FormEvent } from 'react'
 import { useQuery, useMutations, useUser } from 'deepspace'
 import { Button, Input, Textarea, Label, Badge, useToast } from '@/components/ui'
 import { callAction } from '@/lib/actions'
+import { StaffOnlineCount } from '@/components/StaffPresence'
 import {
   QUESTION_OPEN_STATUSES,
   TITLE_MAX,
@@ -110,9 +111,12 @@ export default function QueuePage() {
         <p className="mb-1 text-sm text-muted-foreground">
           Ask one question at a time. You&rsquo;ll see its status update live.
         </p>
-        <p data-testid="waiting-count" className="mb-10 text-sm text-muted-foreground">
+        <p data-testid="waiting-count" className="mb-1 text-sm text-muted-foreground">
           {waitingCount} student{waitingCount === 1 ? '' : 's'} waiting
         </p>
+        <div className="mb-10">
+          <StaffOnlineCount />
+        </div>
 
         {status === 'loading' ? (
           <div data-testid="queue-loading" className="text-sm text-muted-foreground">
@@ -133,7 +137,9 @@ export default function QueuePage() {
                 </div>
                 {open.data.status === 'claimed' ? (
                   <p data-testid="queue-position" className="mb-3 text-sm font-medium text-foreground">
-                    A TA is with you.
+                    {open.data.claimedByName
+                      ? `A TA (${String(open.data.claimedByName)}) is with you.`
+                      : 'A TA is with you.'}
                   </p>
                 ) : Number(open.data.queuePosition) > 0 ? (
                   <p data-testid="queue-position" className="mb-3 text-sm font-medium text-foreground">

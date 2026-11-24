@@ -9,8 +9,10 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery, useUser } from 'deepspace'
-import { Badge } from '@/components/ui'
+import { useMutations, useQuery, useUser } from 'deepspace'
+import { Badge, Button, useToast } from '@/components/ui'
+import { callAction } from '@/lib/actions'
+import { StaffOnlineList } from '@/components/StaffPresence'
 import { QUESTION_OPEN_STATUSES, type Question, type QuestionStatus, type Staff } from '@/lib/types'
 
 const STATUS_LABEL: Record<QuestionStatus, string> = {
@@ -87,6 +89,7 @@ export default function TaQueuePage() {
           </div>
         ) : (
           <div data-testid="ta-ready">
+            <StaffOnlineList />
             <p className="mb-6 text-sm text-muted-foreground">
               {open.length === 0
                 ? 'No open questions right now.'
@@ -117,7 +120,13 @@ export default function TaQueuePage() {
                       <span data-testid="ta-student-name" className="font-medium text-foreground">
                         {String(r.data.studentName || 'Student')}
                       </span>
-                      <span data-testid="ta-position">#{Number(r.data.queuePosition) || 0}</span>
+                      {r.data.status === 'claimed' ? (
+                        <span data-testid="ta-claimed-by" className="font-medium text-foreground">
+                          Claimed by {r.data.claimedBy === myId ? 'you' : String(r.data.claimedByName || 'a TA')}
+                        </span>
+                      ) : (
+                        <span data-testid="ta-position">#{Number(r.data.queuePosition) || 0}</span>
+                      )}
                       {r.data.topic ? (
                         <span className="uppercase tracking-wide">{r.data.topic}</span>
                       ) : null}
@@ -125,6 +134,12 @@ export default function TaQueuePage() {
                     </div>
                     <p className="whitespace-pre-wrap text-sm text-foreground">{r.data.body}</p>
                     <TaAiSummary question={r.data} />
+                    <ClaimControls
+                      questionId={r.recordId}
+                      question={r.data}
+                      myId={myId}
+                      isAdmin={isAdmin}
+                    />
                   </li>
                 ))}
               </ul>
@@ -173,5 +188,75 @@ function AiReasonTag({ reason }: { reason?: string }) {
     <span data-testid="ta-ai-reason" className="ml-2 font-mono text-[10px] text-muted-foreground/70">
       ({reason})
     </span>
+  )
+}
+
+/**
+ * Claim / Release / Resolve, by state. The server actions are the authority
+ * (staff check, own-question rule, atomic claim); this only picks buttons.
+ */
+function ClaimControls({
+  questionId,
+  question,
+  myId,
+  isAdmin,
+}: {
+  questionId: string
+  question: Question
+  myId: string
+  isAdmin: boolean
+}) {
+  const toast = useToast()
+  const { ready } = useMutations<Question>('questions')
+  const [busy, setBusy] = useState<'' | 'claim' | 'release' | 'resolve'>('')
+
+  async function run(kind: 'claim' | 'release' | 'resolve') {
+    const action = kind === 'claim' ? 'claimQuestion' : kind === 'release' ? 'releaseClaim' : 'resolveQuestion'
+    setBusy(kind)
+    const res = await callAction(action, { questionId })
+    setBusy('')
+    if (!res.success) {
+      toast.error(kind === 'claim' ? 'Could not claim' : 'Could not update', res.error)
+    } else if (kind === 'resolve') {
+      toast.success('Marked resolved')
+    }
+  }
+
+  const disabled = !ready || busy !== ''
+  if (question.status === 'claimed') {
+    if (question.claimedBy !== myId && !isAdmin) return null
+    return (
+      <div className="mt-4 flex gap-2">
+        <Button
+          data-testid="ta-resolve"
+          size="sm"
+          loading={busy === 'resolve'}
+          disabled={disabled}
+          onClick={() => run('resolve')}
+        >
+          Resolve
+        </Button>
+        <Button
+          data-testid="ta-release"
+          size="sm"
+          variant="secondary"
+          loading={busy === 'release'}
+          disabled={disabled}
+          onClick={() => run('release')}
+        >
+          Release
+        </Button>
+      </div>
+    )
+  }
+  if (question.studentId === myId) {
+    return <p className="mt-4 text-xs text-muted-foreground">This is your own question.</p>
+  }
+  return (
+    <div className="mt-4">
+      <Button data-testid="ta-claim" size="sm" loading={busy === 'claim'} disabled={disabled} onClick={() => run('claim')}>
+        Claim
+      </Button>
+    </div>
   )
 }
