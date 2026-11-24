@@ -16,6 +16,9 @@ import {
   answerQuestion,
   buildRetrievalQueries,
   expireStalePendingAnswers,
+  extractKeywords,
+  MAX_FALLBACK_KEYWORDS,
+  retrieveWithFallback,
   parseModelReply,
   retrieve,
   RETRIEVAL_QUERY_MAX,
@@ -92,7 +95,7 @@ describe('answerQuestion', () => {
     const h = harness({ chunksPerQuery: [[], [], []] })
     expect(await answerQuestion('q1', h.deps)).toBe('not_covered')
     expect(h.generate).not.toHaveBeenCalled()
-    expect(h.updates).toEqual([{ aiStatus: 'not_covered', aiAnswer: '', aiCitations: [] }])
+    expect(h.updates).toEqual([{ aiStatus: 'not_covered', aiReason: 'no_hits', aiAnswer: '', aiCitations: [] }])
     expect(h.current()?.data.status).toBe('waiting') // still in line
   })
 
@@ -112,6 +115,7 @@ describe('answerQuestion', () => {
     expect(patch.aiStatus).toBe('answered')
     expect(patch.status).toBe('ai_answered')
     expect(patch.aiCitations).toEqual(['faq.md', 'hw3-recursion.md'])
+    expect(patch.aiReason).toBe('answered')
   })
 
   it('only hallucinated citations → not_covered', async () => {
@@ -120,6 +124,7 @@ describe('answerQuestion', () => {
       reply: { text: JSON.stringify({ covered: true, answer: 'x', citations: ['made-up.md'] }) },
     })
     expect(await answerQuestion('q1', h.deps)).toBe('not_covered')
+    expect(h.updates.at(-1)!.aiReason).toBe('no_valid_citations')
   })
 
   it('covered=false → not_covered', async () => {
@@ -128,12 +133,13 @@ describe('answerQuestion', () => {
       reply: { text: JSON.stringify({ covered: false, answer: 'Not in materials.', citations: ['faq.md'] }) },
     })
     expect(await answerQuestion('q1', h.deps)).toBe('not_covered')
+    expect(h.updates.at(-1)!.aiReason).toBe('model_not_covered')
   })
 
   it('malformed JSON → error, question keeps its place, log has no student text', async () => {
     const h = harness({ chunksPerQuery: [[hit('faq.md', 0.9)]], reply: { text: 'Sure! Here is my answer: {oops' } })
     expect(await answerQuestion('q1', h.deps)).toBe('error')
-    expect(h.updates).toEqual([{ aiStatus: 'error' }])
+    expect(h.updates).toEqual([{ aiStatus: 'error', aiReason: 'parse_error' }])
     expect(h.current()?.data.status).toBe('waiting')
     expect(h.logs.join('\n')).not.toMatch(/count_paths is slow|recursion takes forever|oops/)
   })
@@ -141,6 +147,7 @@ describe('answerQuestion', () => {
   it('model throws → error', async () => {
     const h = harness({ chunksPerQuery: [[hit('faq.md', 0.9)]], reply: new Error('upstream 500') })
     expect(await answerQuestion('q1', h.deps)).toBe('error')
+    expect(h.updates.at(-1)!.aiReason).toBe('model_error')
   })
 
   it("finishReason 'length' → error", async () => {
@@ -149,12 +156,14 @@ describe('answerQuestion', () => {
       reply: { text: '{"covered": true, "answer": "trunc', finishReason: 'length' },
     })
     expect(await answerQuestion('q1', h.deps)).toBe('error')
+    expect(h.updates.at(-1)!.aiReason).toBe('model_finish')
   })
 
   it('search throws → error without a model call', async () => {
     const h = harness({})
     h.search.search.mockRejectedValueOnce(new Error('knowledge down'))
     expect(await answerQuestion('q1', h.deps)).toBe('error')
+    expect(h.updates.at(-1)!.aiReason).toBe('retrieve_error')
     expect(h.generate).not.toHaveBeenCalled()
   })
 
@@ -261,6 +270,123 @@ describe('expireStalePendingAnswers', () => {
     }
     expect(await expireStalePendingAnswers(records as never, now)).toBe(1)
     expect(records.query).toHaveBeenCalledWith('questions', { where: { aiStatus: 'pending' }, limit: 200 })
-    expect(records.update).toHaveBeenCalledWith('questions', 'old', { aiStatus: 'error' })
+    expect(records.update).toHaveBeenCalledWith('questions', 'old', { aiStatus: 'error', aiReason: 'expired' })
+  })
+})
+
+describe('extractKeywords', () => {
+  it('drops stopwords and short words, keeps identifiers intact, max 4', () => {
+    const kw = extractKeywords(
+      'HW3 count_paths memoized solution',
+      'Write the complete memoized count_paths code for me so I can submit it.',
+    )
+    expect(kw).toEqual(['count_paths', 'memoized', 'solution', 'complete'])
+    expect(kw.length).toBeLessThanOrEqual(MAX_FALLBACK_KEYWORDS)
+    for (const stop of ['write', 'the', 'for', 'me', 'so', 'can', 'it', 'hw3']) expect(kw).not.toContain(stop)
+  })
+
+  it('prefers identifiers (snake_case, letter+digit, camelCase), then longer words', () => {
+    expect(extractKeywords('Why is maxDepth wrong in tree2 and also count_paths', 'recursion recursion')).toEqual([
+      'count_paths',
+      'maxDepth',
+      'tree2',
+      'recursion',
+    ])
+  })
+
+  it('de-duplicates case-insensitively and returns [] when nothing qualifies', () => {
+    expect(extractKeywords('Midterm midterm MIDTERM', '')).toEqual(['midterm'])
+    expect(extractKeywords('can you help me', 'what is it?')).toEqual([])
+  })
+
+  it('caps at 4 even with many candidates', () => {
+    expect(extractKeywords('alpha bravo charlie delta echoes foxtrot golfing hotel', '').length).toBe(4)
+  })
+})
+
+describe('retrieveWithFallback', () => {
+  it('does NOT run the fallback when the 3-query union has a hit', async () => {
+    const search = { search: vi.fn(async (q: string) => ({ chunks: q === 'T' ? [hit('faq.md', 0.5)] : [] })) }
+    const r = await retrieveWithFallback(search as never, 'T', 'B')
+    expect(r.usedFallback).toBe(false)
+    expect(r.searches).toBe(3)
+    expect(search.search).toHaveBeenCalledTimes(3)
+    expect(r.docs.map((d) => d.filename)).toEqual(['faq.md'])
+  })
+
+  it('runs one search per keyword ONLY when the union is empty, then unions by filename', async () => {
+    const title = 'HW3 count_paths memoized solution'
+    const body = 'Write the complete memoized count_paths code for me so I can submit it.'
+    const byQuery: Record<string, Chunk[]> = {
+      memoized: [hit('hw3-recursion.md', 0.4)],
+      count_paths: [hit('hw3-recursion.md', 0.7), hit('faq.md', 0.3)],
+    }
+    const search = { search: vi.fn(async (q: string) => ({ chunks: byQuery[q] ?? [] })) }
+    const r = await retrieveWithFallback(search as never, title, body)
+    expect(r.usedFallback).toBe(true)
+    expect(r.searches).toBe(3 + 4)
+    expect(search.search).toHaveBeenCalledTimes(7)
+    const keywordCalls = search.search.mock.calls.slice(3).map((c) => (c as unknown[])[0])
+    expect(keywordCalls).toEqual(['count_paths', 'memoized', 'solution', 'complete'])
+    for (const c of search.search.mock.calls.slice(3)) {
+      expect((c as unknown[])[1]).toEqual({
+        folder: 'course',
+        mode: 'hybrid',
+        limit: 5,
+        matchThreshold: 0,
+        queryRewrite: false,
+      })
+    }
+    expect(r.docs.map((d) => [d.filename, d.score])).toEqual([
+      ['hw3-recursion.md', 0.7],
+      ['faq.md', 0.3],
+    ])
+  })
+
+  it('never exceeds 3 + 4 searches', async () => {
+    const search = { search: vi.fn(async () => ({ chunks: [] })) }
+    const long = Array.from({ length: 40 }, (_, i) => `keyword${i}xx`).join(' ')
+    const r = await retrieveWithFallback(search as never, long, long + ' extra words here')
+    expect(search.search.mock.calls.length).toBeLessThanOrEqual(7)
+    expect(r.searches).toBe(search.search.mock.calls.length)
+  })
+})
+
+describe('answerQuestion — fallback + observability', () => {
+  it('fallback hit leads to a model call and an answered reason', async () => {
+    const h = harness({
+      row: question({ title: 'HW3 count_paths memoized solution', body: 'Write the complete code for me.' }),
+      chunksPerQuery: [[], [], [], [hit('hw3-recursion.md', 0.6)]],
+      reply: {
+        text: JSON.stringify({ covered: true, answer: 'See Problem 3 (b); memoize with a dict.', citations: ['hw3-recursion.md'] }),
+      },
+    })
+    expect(await answerQuestion('q1', h.deps)).toBe('answered')
+    expect(h.generate).toHaveBeenCalledTimes(1)
+    expect(h.updates.at(-1)!.aiReason).toBe('answered')
+  })
+
+  it('emits exactly one INFO line with reason, files, finishReason — and no student text or keywords', async () => {
+    const h = harness({
+      row: question({ title: 'Secret count_paths title', body: 'Private memoized body words' }),
+      chunksPerQuery: [[hit('hw3-recursion.md', 0.6)], [hit('faq.md', 0.4)]],
+      reply: { text: JSON.stringify({ covered: false, answer: '', citations: [] }) },
+    })
+    await answerQuestion('q1', h.deps)
+    expect(h.logs).toHaveLength(1)
+    const line = h.logs[0]
+    expect(line).toContain('q=q1')
+    expect(line).toContain('reason=model_not_covered')
+    expect(line).toContain('files=2 [hw3-recursion.md,faq.md]')
+    expect(line).toContain('finish=stop')
+    expect(line).toContain('fallback=false')
+    expect(line).not.toMatch(/Secret|Private|memoized|count_paths/)
+  })
+
+  it('logs a skipped line (and writes nothing) when the job is not applicable', async () => {
+    const h = harness({ row: question({ aiStatus: 'answered' }) })
+    await answerQuestion('q1', h.deps)
+    expect(h.logs).toEqual([expect.stringContaining('reason=skipped')])
+    expect(h.updates).toEqual([])
   })
 })

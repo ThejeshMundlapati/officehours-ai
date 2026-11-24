@@ -87,6 +87,7 @@ const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools, env }
     aiAnswer: '',
     aiCitations: [],
     aiFeedback: '',
+    aiReason: '',
   })
   if (!created.success) return created
   const questionId = created.data.recordId
@@ -103,7 +104,7 @@ const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools, env }
   } catch (err) {
     // Never leave the student on a spinner: the question keeps its place.
     console.warn(`[submitQuestion] q=${questionId} enqueue failed: ${err instanceof Error ? err.name : 'error'}`)
-    await tools.update<Question>('questions', questionId, { aiStatus: 'error' })
+    await tools.update<Question>('questions', questionId, { aiStatus: 'error', aiReason: 'enqueue_error' })
   }
   return { success: true, data: { recordId: questionId } }
 }

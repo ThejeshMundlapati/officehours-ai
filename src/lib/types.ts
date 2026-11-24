@@ -52,10 +52,27 @@ export interface Question {
   /** Filenames of course materials the answer cites. */
   aiCitations?: string[]
   aiFeedback?: AiFeedback
+  aiReason?: AiReason
 }
 
 export type AiStatus = 'pending' | 'answered' | 'not_covered' | 'error'
 export type AiFeedback = '' | 'helped' | 'needs_help'
+/**
+ * Why the AI ended where it did (staff diagnostics). Written only by server code.
+ * '' = not decided yet. Error reasons name the failing stage, never content.
+ */
+export type AiReason =
+  | ''
+  | 'no_hits'
+  | 'model_not_covered'
+  | 'no_valid_citations'
+  | 'answered'
+  | 'retrieve_error'
+  | 'model_error'
+  | 'model_finish'
+  | 'parse_error'
+  | 'enqueue_error'
+  | 'expired'
 export const AI_ANSWER_MAX = 4000
 
 /** Public queue counters. Single record, recordId 'global'. */

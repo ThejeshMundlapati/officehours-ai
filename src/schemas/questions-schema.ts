@@ -48,6 +48,8 @@ export const questionsSchema: CollectionSchema = {
     { name: 'aiCitations', storage: 'text', interpretation: { kind: 'json' } },
     // '' | 'helped' | 'needs_help' (plain text: '' is not a select option).
     { name: 'aiFeedback', storage: 'text', interpretation: 'plain' },
+    // Staff diagnostics: why the AI answered / didn't (no student text).
+    { name: 'aiReason', storage: 'text', interpretation: 'plain', maxLength: 40 },
   ],
   permissions: {
     viewer: { read: false, create: false, update: false, delete: false },

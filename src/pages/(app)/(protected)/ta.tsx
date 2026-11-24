@@ -150,6 +150,7 @@ function TaAiSummary({ question }: { question: Question }) {
     return (
       <p data-testid="ta-ai-note" className="mt-3 text-xs text-muted-foreground">
         {AI_STATUS_NOTE[status] ?? ''}
+        <AiReasonTag reason={question.aiReason} />
       </p>
     )
   }
@@ -158,8 +159,19 @@ function TaAiSummary({ question }: { question: Question }) {
     <details data-testid="ta-ai-answer" className="mt-3 rounded-md border border-border bg-background p-3 text-sm">
       <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
         AI answer{citations.length > 0 ? ` · cites ${citations.join(', ')}` : ''}
+        <AiReasonTag reason={question.aiReason} />
       </summary>
       <p className="mt-2 whitespace-pre-wrap text-foreground">{question.aiAnswer}</p>
     </details>
+  )
+}
+
+/** Staff-only diagnostic: the machine reason, shown small and muted. */
+function AiReasonTag({ reason }: { reason?: string }) {
+  if (!reason || reason === 'answered') return null
+  return (
+    <span data-testid="ta-ai-reason" className="ml-2 font-mono text-[10px] text-muted-foreground/70">
+      ({reason})
+    </span>
   )
 }

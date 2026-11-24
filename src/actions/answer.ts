@@ -17,7 +17,8 @@
  * moves `status` waiting → ai_answered (a claimed question stays claimed; a
  * question that left the line is never resurrected).
  *
- * Billing (owner): 3 hybrid searches ($0.825 / 1k each, bindings/knowledge) +
+ * Billing (owner): 3 hybrid searches, plus up to 4 keyword searches only when
+ * those 3 return nothing (worst case 7; $0.825 / 1k each, bindings/knowledge) +
  * one claude-sonnet-5-5 call through createDeepSpaceAI with no authToken
  * (falls back to APP_OWNER_JWT → owner pays; sdk-reference/worker/ai).
  */
@@ -27,7 +28,7 @@ import { buildCronContext, createDeepSpaceAI, knowledge } from 'deepspace/worker
 import type { KnowledgeClient } from 'deepspace/worker'
 import type { Env } from '../../worker'
 import { MATERIALS_FOLDER } from '../lib/materials'
-import { AI_ANSWER_MAX, QUESTION_OPEN_STATUSES, type AiStatus, type Question } from '../lib/types'
+import { AI_ANSWER_MAX, QUESTION_OPEN_STATUSES, type AiReason, type AiStatus, type Question } from '../lib/types'
 
 export const ANSWER_JOB_TYPE = 'answer-question'
 export const ANSWER_MODEL = 'claude-sonnet-5-5'
@@ -184,33 +185,126 @@ export function parseModelReply(raw: string): ParsedReply | null {
   return { covered: o.covered, answer: o.answer.trim(), citations }
 }
 
+// ── keyword fallback ────────────────────────────────────────────────────────
+
+/**
+ * The platform search behaves lexically and returns nothing when a long query
+ * contains words absent from the materials (Phase 4/5 investigation). When the
+ * 3-query union is empty, search single keywords instead.
+ */
+export const MAX_FALLBACK_KEYWORDS = 4
+const MIN_KEYWORD_LENGTH = 4
+
+/** Common English + request words that carry no course content. */
+const STOPWORDS = new Set(
+  (
+    'about above after again against also because been before being below between both cannot could ' +
+    'does doing down during each few from further have having here into itself just more most much ' +
+    'myself only other ought over same should some such than that their theirs them themselves then ' +
+    'there these they this those through under until very were what when where which while whom whose ' +
+    'will with would your yours yourself anyone anything someone something thing things really still ' +
+    'even like want wants need needs know make made give gave please thanks thank help helps write ' +
+    'tell show explain understand question questions problem stuck work works working doesnt dont cant ' +
+    'isnt wont didnt getting trying tried keep keeps always never every without'
+  ).split(/\s+/),
+)
+
+/** Identifier-like: snake_case, digits mixed with letters, or camelCase. */
+function isIdentifier(token: string): boolean {
+  return token.includes('_') || (/[a-z]/i.test(token) && /\d/.test(token)) || /[a-z][A-Z]/.test(token)
+}
+
+/**
+ * Up to 4 keywords from title + body: stopwords and words under 4 chars
+ * dropped, identifiers (count_paths) kept intact. There is no corpus
+ * frequency available, so "rarest/longest" is approximated by: identifiers
+ * first (most specific), then longer words, then first appearance.
+ */
+export function extractKeywords(title: string, body: string): string[] {
+  const tokens = `${title}\n${body}`.match(/[A-Za-z_][A-Za-z0-9_]*/g) ?? []
+  const stats = new Map<string, { token: string; first: number; ident: boolean }>()
+  tokens.forEach((raw, i) => {
+    const t = raw.replace(/^_+|_+$/g, '')
+    const key = t.toLowerCase()
+    if (t.length < MIN_KEYWORD_LENGTH || STOPWORDS.has(key)) return
+    if (!stats.has(key)) stats.set(key, { token: isIdentifier(t) ? t : key, first: i, ident: isIdentifier(t) })
+  })
+  return [...stats.values()]
+    .sort((a, b) => Number(b.ident) - Number(a.ident) || b.token.length - a.token.length || a.first - b.first)
+    .slice(0, MAX_FALLBACK_KEYWORDS)
+    .map((s) => s.token)
+}
+
+export interface RetrievalResult {
+  docs: RetrievedDoc[]
+  searches: number
+  usedFallback: boolean
+}
+
+/**
+ * 3 phrase searches; only if their union is empty, up to 4 keyword searches.
+ * Worst case 7 hybrid searches per question.
+ */
+export async function retrieveWithFallback(
+  search: Pick<KnowledgeClient, 'search'>,
+  title: string,
+  body: string,
+): Promise<RetrievalResult> {
+  const queries = buildRetrievalQueries(title, body)
+  const docs = await retrieve(search, queries)
+  if (docs.length > 0) return { docs, searches: queries.length, usedFallback: false }
+  const keywords = extractKeywords(title, body)
+  const fallback = keywords.length > 0 ? await retrieve(search, keywords) : []
+  return { docs: fallback, searches: queries.length + keywords.length, usedFallback: true }
+}
+
 // ── orchestration ───────────────────────────────────────────────────────────
 
 function isPendingOpen(row: QuestionRow | null): row is QuestionRow {
   return !!row && QUESTION_OPEN_STATUSES.includes(row.data.status) && row.data.aiStatus === 'pending'
 }
 
-function errorSummary(err: unknown): string {
-  if (err instanceof Error) return `${err.name}: ${err.message.slice(0, 200)}`
-  return 'unknown error'
+/** A short, text-free error tag: KnowledgeError code, else the error class. */
+function errorTag(err: unknown): string {
+  const code = (err as { code?: unknown } | null)?.code
+  if (typeof code === 'string' && /^[a-z0-9_]{1,40}$/i.test(code)) return code
+  return err instanceof Error ? err.name : 'unknown'
 }
 
 export async function answerQuestion(questionId: string, deps: AnswerDeps): Promise<AnswerOutcome> {
-  const log = deps.log ?? ((line: string) => console.warn(line))
+  const log = deps.log ?? ((line: string) => console.info(line))
+  // Everything that goes into the single INFO line. Never student text
+  // (keywords are student text too, so they are not logged).
+  const trace = { files: [] as string[], fallback: false, searches: 0, finish: '-', err: '' }
+  const emit = (reason: string) =>
+    log(
+      `[answer-question] q=${questionId} reason=${reason} files=${trace.files.length}` +
+        ` [${trace.files.join(',')}] searches=${trace.searches} fallback=${trace.fallback}` +
+        ` finish=${trace.finish}${trace.err ? ` err=${trace.err}` : ''}`,
+    )
+
   const first = await deps.store.getQuestion(questionId)
-  if (!isPendingOpen(first)) return 'skipped'
+  if (!isPendingOpen(first)) {
+    emit('skipped')
+    return 'skipped'
+  }
 
   /** Re-read and write only if still pending/open; never resurrect or un-claim. */
   async function finish(
     aiStatus: Exclude<AiStatus, 'pending'>,
+    aiReason: AiReason,
     extra: Partial<Question> = {},
   ): Promise<AnswerOutcome> {
     const now = await deps.store.getQuestion(questionId)
-    if (!isPendingOpen(now)) return 'skipped'
-    const patch: Partial<Question> = { aiStatus, ...extra }
+    if (!isPendingOpen(now)) {
+      emit(`skipped_after_${aiReason}`)
+      return 'skipped'
+    }
+    const patch: Partial<Question> = { aiStatus, aiReason, ...extra }
     if (aiStatus === 'answered' && now.data.status === 'waiting') patch.status = 'ai_answered'
     await deps.store.updateQuestion(questionId, patch)
-    return aiStatus === 'answered' ? 'answered' : aiStatus
+    emit(aiReason)
+    return aiStatus
   }
 
   const title = String(first.data.title ?? '')
@@ -218,42 +312,46 @@ export async function answerQuestion(questionId: string, deps: AnswerDeps): Prom
 
   let docs: RetrievedDoc[]
   try {
-    docs = await retrieve(deps.search, buildRetrievalQueries(title, body))
+    const r = await retrieveWithFallback(deps.search, title, body)
+    docs = r.docs
+    trace.searches = r.searches
+    trace.fallback = r.usedFallback
+    trace.files = docs.map((d) => d.filename)
   } catch (err) {
-    log(`[answer-question] q=${questionId} stage=retrieve error=${errorSummary(err)}`)
-    return finish('error')
+    trace.err = errorTag(err)
+    return finish('error', 'retrieve_error')
   }
 
-  // No hits → no model call; the student simply stays in line for a TA.
-  if (docs.length === 0) return finish('not_covered', { aiAnswer: '', aiCitations: [] })
+  // No hits even after the keyword fallback → no model call; a TA will help.
+  if (docs.length === 0) return finish('not_covered', 'no_hits', { aiAnswer: '', aiCitations: [] })
 
   let reply: ModelReply
   try {
     reply = await deps.generate({ system: SYSTEM_PROMPT, prompt: buildPrompt(title, body, docs) })
   } catch (err) {
-    log(`[answer-question] q=${questionId} stage=model error=${errorSummary(err)}`)
-    return finish('error')
+    trace.err = errorTag(err)
+    return finish('error', 'model_error')
   }
+  trace.finish = reply.finishReason
   if (reply.finishReason !== 'stop') {
     // 'length' (output cap), 'content-filter' (refusal), etc. Never log the text.
-    log(`[answer-question] q=${questionId} stage=model finishReason=${reply.finishReason}`)
-    return finish('error')
+    return finish('error', 'model_finish')
   }
 
   const parsed = parseModelReply(reply.text)
-  if (!parsed) {
-    log(`[answer-question] q=${questionId} stage=parse error=malformed_json chars=${reply.text.length}`)
-    return finish('error')
+  if (!parsed) return finish('error', 'parse_error')
+
+  if (!parsed.covered || !parsed.answer) {
+    return finish('not_covered', 'model_not_covered', { aiAnswer: '', aiCitations: [] })
   }
 
   // Keep only citations of files we actually retrieved (drop hallucinations).
   const retrieved = new Set(docs.map((d) => d.filename))
   const citations = [...new Set(parsed.citations.filter((c) => retrieved.has(c)))]
-
-  if (!parsed.covered || citations.length === 0 || !parsed.answer) {
-    return finish('not_covered', { aiAnswer: '', aiCitations: [] })
+  if (citations.length === 0) {
+    return finish('not_covered', 'no_valid_citations', { aiAnswer: '', aiCitations: [] })
   }
-  return finish('answered', { aiAnswer: parsed.answer.slice(0, AI_ANSWER_MAX), aiCitations: citations })
+  return finish('answered', 'answered', { aiAnswer: parsed.answer.slice(0, AI_ANSWER_MAX), aiCitations: citations })
 }
 
 // ── real wiring ─────────────────────────────────────────────────────────────
@@ -327,7 +425,7 @@ export async function expireStalePendingAnswers(records: CronRecords, now = Date
     if (typeof raw.recordId !== 'string') continue
     const created = Date.parse(String(raw.data?.createdAt ?? ''))
     if (Number.isFinite(created) && now - created > STALE_PENDING_MS) {
-      await records.update('questions', raw.recordId, { aiStatus: 'error' })
+      await records.update('questions', raw.recordId, { aiStatus: 'error', aiReason: 'expired' })
       expired++
     }
   }
