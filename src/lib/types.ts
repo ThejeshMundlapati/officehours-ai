@@ -55,6 +55,32 @@ export interface QueueStats {
   updatedAt: string
 }
 
+/** Knowledge item statuses (mirrors deepspace/worker `KnowledgeStatus`). */
+export type MaterialStatus = 'queued' | 'running' | 'completed' | 'error' | 'skipped' | 'outdated'
+export const MATERIAL_STATUSES: MaterialStatus[] = ['queued', 'running', 'completed', 'error', 'skipped', 'outdated']
+/** Ingestion still in progress — the only rows the status sync touches. */
+export const MATERIAL_PENDING_STATUSES: MaterialStatus[] = ['queued', 'running']
+
+/** User-defined fields of a `materials` record (admin-only collection). */
+export interface Material {
+  [key: string]: unknown
+  filename: string
+  /** Provider item id returned by knowledge(env).add — used for remove/sync. */
+  knowledgeItemId: string
+  sizeBytes: number
+  status: MaterialStatus
+  chunksCount: number
+  uploadedBy: string
+  createdAt: string
+}
+
+/** One chunk returned by searchMaterials. */
+export interface MaterialSearchHit {
+  filename: string
+  score: number
+  excerpt: string
+}
+
 /** User-defined fields of a `staff` record. recordId === userId. */
 export interface Staff {
   [key: string]: unknown

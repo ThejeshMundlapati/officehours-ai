@@ -37,7 +37,15 @@ export default function TaQueuePage() {
   const isAdmin = user?.role === 'admin'
 
   const { records: staff, status: staffStatus } = useQuery<Staff>('staff')
-  const { records: questions } = useQuery<Question>('questions')
+  // One equality subscription per open status — never the whole collection
+  // (an admin would otherwise receive every solved/left row ever written).
+  const waitingOpts = useMemo(() => ({ where: { status: 'waiting' } }), [])
+  const aiOpts = useMemo(() => ({ where: { status: 'ai_answered' } }), [])
+  const claimedOpts = useMemo(() => ({ where: { status: 'claimed' } }), [])
+  const { records: waitingQs } = useQuery<Question>('questions', waitingOpts)
+  const { records: aiQs } = useQuery<Question>('questions', aiOpts)
+  const { records: claimedQs } = useQuery<Question>('questions', claimedOpts)
+  const questions = useMemo(() => [...waitingQs, ...aiQs, ...claimedQs], [waitingQs, aiQs, claimedQs])
 
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {

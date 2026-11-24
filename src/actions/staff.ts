@@ -10,11 +10,12 @@
  * these actions reach it through `tools` (RBAC off) to compare it server-side.
  */
 
-import { isAnonymousUserId, resolveAppRole } from 'deepspace/worker'
+import { isAnonymousUserId } from 'deepspace/worker'
 import type { ActionHandler, ActionTools } from 'deepspace/worker'
 import type { Env } from '../../worker'
-import { QUESTION_OPEN_STATUSES, type Question, type Staff } from '../lib/types'
-import { recomputeQueue, queueStoreFromTools } from './queue'
+import type { Question, Staff } from '../lib/types'
+import { recomputeQueue, queueStoreFromTools, listOpenQuestions } from './queue'
+import { isAdmin } from './auth'
 
 const SETTINGS_INVITE_KEY = 'ta_invite_code'
 // Unambiguous alphabet (no 0/O/1/I/L). 32 chars divides 256 evenly → no modulo bias.
@@ -29,15 +30,6 @@ function generateInviteCode(): string {
   let out = ''
   for (let i = 0; i < INVITE_CODE_LENGTH; i++) out += INVITE_CODE_ALPHABET[bytes[i] % INVITE_CODE_ALPHABET.length]
   return out
-}
-
-async function isAdmin(env: Env, userId: string): Promise<boolean> {
-  if (userId === env.OWNER_USER_ID) return true
-  try {
-    return (await resolveAppRole(env, userId)) === 'admin'
-  } catch {
-    return false
-  }
 }
 
 /** True only if the caller's users-record email ends with '@deepspace.test'. */
@@ -62,10 +54,8 @@ async function mutateOpenCollaborators(
   userId: string,
   op: 'add' | 'remove',
 ): Promise<void> {
-  const res = await tools.query<Question>('questions', { limit: 500 })
-  if (!res.success) return
-  for (const r of res.data.records) {
-    if (!QUESTION_OPEN_STATUSES.includes(r.data.status)) continue
+  // One equality query per open status — never a full-history scan.
+  for (const r of await listOpenQuestions(tools)) {
     const current = Array.isArray(r.data.collaborators) ? (r.data.collaborators as string[]) : []
     const has = current.includes(userId)
     if (op === 'add' && !has) {
@@ -183,17 +173,12 @@ const devResetQueue: ActionHandler<Env> = async ({ userId, tools, env }) => {
   if (!(await isTestAccount(tools, userId))) {
     return { success: false, code: 'not_available', error: 'Not available.' }
   }
-  const res = await tools.query<Question>('questions', { limit: 500 })
-  if (res.success) {
-    for (const r of res.data.records) {
-      if (QUESTION_OPEN_STATUSES.includes(r.data.status)) {
-        await tools.update<Question>('questions', r.recordId, {
-          status: 'left',
-          queuePosition: 0,
-          peopleAhead: 0,
-        })
-      }
-    }
+  for (const r of await listOpenQuestions(tools)) {
+    await tools.update<Question>('questions', r.recordId, {
+      status: 'left',
+      queuePosition: 0,
+      peopleAhead: 0,
+    })
   }
   await recomputeQueue(queueStoreFromTools(tools))
   return { success: true, data: {} }

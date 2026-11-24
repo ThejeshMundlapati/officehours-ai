@@ -11,6 +11,7 @@ import { useQuery, useUser } from 'deepspace'
 import { Button, useToast } from '@/components/ui'
 import { callAction } from '@/lib/actions'
 import type { Staff } from '@/lib/types'
+import MaterialsSection from '@/components/MaterialsSection'
 
 const INVITE_CODE_RECORD_ID = 'ta_invite_code'
 
@@ -123,6 +124,8 @@ export default function InstructorPage() {
             </ul>
           )}
         </section>
+
+        <MaterialsSection />
       </div>
     </div>
   )

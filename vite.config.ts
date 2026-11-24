@@ -20,6 +20,13 @@ export default defineConfig({
     // the generated app and keep local dev/test startup deterministic.
     cloudflare({
       inspectorPort: false,
+      // wrangler.toml declares [[ai_search]] for the managed knowledge base.
+      // That binding is remote-only, so by default the plugin opens a remote
+      // proxy session (which needs CLOUDFLARE_API_TOKEN and fails headless).
+      // The app never reads env.KNOWLEDGE — `knowledge(env)` talks to the
+      // platform over HTTP (docs: bindings/knowledge) — so local dev skips
+      // remote bindings. The deploy still provisions the instance.
+      remoteBindings: false,
     }),
     // The app id `define`, the preview-secret cleanup, and the client dedupe
     // hint — all shipped by the SDK so a fix to any of them arrives with a

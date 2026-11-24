@@ -25,13 +25,32 @@
  */
 
 import type { ActionTools } from 'deepspace/worker'
-import { QUESTION_IN_LINE_STATUSES, type Question, type QueueStats } from '../lib/types'
+import {
+  QUESTION_IN_LINE_STATUSES,
+  QUESTION_OPEN_STATUSES,
+  type Question,
+  type QueueStats,
+} from '../lib/types'
 
 export const QUEUE_STATS_RECORD_ID = 'global'
 // Generous cap per status query. The live in-line set is small; history never
 // enters these queries, so new questions can't fall outside the window the way
 // a single unordered full-collection scan allowed.
 const IN_LINE_QUERY_LIMIT = 1000
+
+/**
+ * Every OPEN question (waiting / ai_answered / claimed), one equality query per
+ * status. `where` is equality-only (no `in`), so this is the only way to read
+ * the open set without scanning history.
+ */
+export async function listOpenQuestions(tools: ActionTools): Promise<QueueRow[]> {
+  const rows: QueueRow[] = []
+  for (const status of QUESTION_OPEN_STATUSES) {
+    const res = await tools.query<Question>('questions', { where: { status }, limit: IN_LINE_QUERY_LIMIT })
+    if (res.success) for (const r of res.data.records) rows.push({ recordId: r.recordId, data: r.data })
+  }
+  return rows
+}
 
 export interface QueueRow {
   recordId: string
