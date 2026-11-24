@@ -26,7 +26,7 @@ import {
 
 const STATUS_LABEL: Record<QuestionStatus, string> = {
   waiting: 'Waiting',
-  ai_answered: 'AI answered',
+  ai_answered: 'AI answered — still in line',
   claimed: 'Claimed by a TA',
   solved: 'Solved',
   left: 'Left',
@@ -50,6 +50,7 @@ export default function QueuePage() {
   const [body, setBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [leaving, setLeaving] = useState(false)
+  const [feedbackBusy, setFeedbackBusy] = useState<'' | 'solved' | 'help'>('')
 
   // Defense in depth: never surface a row that isn't the signed-in user's own,
   // regardless of what the server returned for their role.
@@ -80,6 +81,24 @@ export default function QueuePage() {
     setLeaving(false)
     if (res.success) toast.info('Left the queue', 'Your question was removed.')
     else toast.error('Could not leave', res.error)
+  }
+
+  async function onSolved() {
+    if (!open || feedbackBusy) return
+    setFeedbackBusy('solved')
+    const res = await callAction('markSolved', { questionId: open.recordId })
+    setFeedbackBusy('')
+    if (res.success) toast.success('Glad it helped!', 'Your question is marked solved.')
+    else toast.error('Could not update', res.error)
+  }
+
+  async function onNeedHelp() {
+    if (!open || feedbackBusy) return
+    setFeedbackBusy('help')
+    const res = await callAction('stillNeedHelp', { questionId: open.recordId })
+    setFeedbackBusy('')
+    if (res.success) toast.info('Got it', 'You keep your place — a TA will help you.')
+    else toast.error('Could not update', res.error)
   }
 
   const canSubmit = ready && !submitting && title.trim().length > 0 && body.trim().length > 0
@@ -131,6 +150,12 @@ export default function QueuePage() {
                   </p>
                 ) : null}
                 <p className="whitespace-pre-wrap text-sm text-foreground">{open.data.body}</p>
+                <AiPanel
+                  question={open.data}
+                  busy={feedbackBusy}
+                  onSolved={onSolved}
+                  onNeedHelp={onNeedHelp}
+                />
                 <Button
                   data-testid="leave-button"
                   variant="destructive"
@@ -196,6 +221,95 @@ export default function QueuePage() {
         )}
 
         {import.meta.env.DEV && <DevTools role={user?.role ?? 'unknown'} />}
+      </div>
+    </div>
+  )
+}
+
+/** The AI-answer area inside the student's open-question card. */
+function AiPanel({
+  question,
+  busy,
+  onSolved,
+  onNeedHelp,
+}: {
+  question: Question
+  busy: '' | 'solved' | 'help'
+  onSolved: () => void
+  onNeedHelp: () => void
+}) {
+  const status = question.aiStatus
+  if (!status) return null
+  const box = 'mt-5 rounded-md border border-border bg-background p-4 text-sm'
+
+  if (status === 'pending') {
+    return (
+      <div data-testid="ai-pending" className={`${box} flex items-center gap-2 text-muted-foreground`}>
+        <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />
+        Checking the course materials&hellip;
+      </div>
+    )
+  }
+  if (status === 'not_covered') {
+    return (
+      <div data-testid="ai-not-covered" className={`${box} text-muted-foreground`}>
+        Not covered in the course materials — a TA will help you.
+      </div>
+    )
+  }
+  if (status === 'error') {
+    return (
+      <div data-testid="ai-error" className={`${box} text-muted-foreground`}>
+        Couldn&rsquo;t check the materials — you&rsquo;re still in line.
+      </div>
+    )
+  }
+
+  const citations = Array.isArray(question.aiCitations) ? question.aiCitations : []
+  const askedForHelp = question.aiFeedback === 'needs_help'
+  return (
+    <div data-testid="ai-answer" className={box}>
+      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        From the course materials
+      </p>
+      <p data-testid="ai-answer-text" className="whitespace-pre-wrap text-foreground">
+        {question.aiAnswer}
+      </p>
+      {citations.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {citations.map((c) => (
+            <Badge key={c} data-testid="ai-citation" variant="outline" className="font-mono">
+              {c}
+            </Badge>
+          ))}
+        </div>
+      )}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button
+          data-testid="ai-solved"
+          size="sm"
+          loading={busy === 'solved'}
+          disabled={busy !== ''}
+          onClick={onSolved}
+        >
+          This solved it
+        </Button>
+        {askedForHelp ? (
+          <span data-testid="ai-help-requested" className="text-xs text-muted-foreground">
+            A TA will still help you — you keep your place.
+          </span>
+        ) : (
+          <Button
+            data-testid="ai-need-help"
+            size="sm"
+            variant="secondary"
+            loading={busy === 'help'}
+            disabled={busy !== ''}
+            onClick={onNeedHelp}
+          >
+            Still need help
+          </Button>
+        )}
       </div>
     </div>
   )

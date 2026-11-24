@@ -7,8 +7,8 @@
  * only from `ctx.userId` (the verified JWT subject) — never from params.
  */
 
-import { isAnonymousUserId } from 'deepspace/worker'
-import type { ActionHandler } from 'deepspace/worker'
+import { enqueueJob, isAnonymousUserId } from 'deepspace/worker'
+import type { ActionHandler, ActionTools } from 'deepspace/worker'
 import type { Env } from '../../worker'
 import {
   QUESTION_OPEN_STATUSES,
@@ -20,6 +20,8 @@ import {
   type Staff,
 } from '../lib/types'
 import { recomputeQueue, queueStoreFromTools } from './queue'
+import { ANSWER_JOB_TYPE } from './answer'
+import { isDevTestCaller } from './auth'
 
 const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
 
@@ -27,7 +29,7 @@ const asString = (v: unknown): string => (typeof v === 'string' ? v : '')
  * submitQuestion({ title, body, topic? }) — create one 'waiting' question owned
  * by the caller, refusing a second while they already have one open.
  */
-const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools }) => {
+const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools, env }) => {
   if (isAnonymousUserId(userId)) {
     return { success: false, code: 'anonymous', error: 'Sign in to ask a question.' }
   }
@@ -65,6 +67,9 @@ const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools }) => 
       ? asString(userRow.data.record.data.name) || asString(userRow.data.record.data.email)
       : '') || 'Student'
 
+  // Paid AI work is skipped for automated test accounts in dev (see auth.ts).
+  const aiEnabled = !(await isDevTestCaller(env, tools, userId))
+
   const created = await tools.create<Question>('questions', {
     studentId: userId,
     title,
@@ -78,11 +83,29 @@ const submitQuestion: ActionHandler<Env> = async ({ userId, params, tools }) => 
     peopleAhead: 0,
     collaborators,
     createdAt: new Date().toISOString(),
+    ...(aiEnabled ? { aiStatus: 'pending' as const } : {}),
+    aiAnswer: '',
+    aiCitations: [],
+    aiFeedback: '',
   })
   if (!created.success) return created
+  const questionId = created.data.recordId
 
   await recomputeQueue(queueStoreFromTools(tools))
-  return { success: true, data: { recordId: created.data.recordId } }
+
+  // Fire-and-forget: the AI answer runs in the background job room. enqueueJob
+  // only inserts a queue row (one DO round-trip), so this returns immediately.
+  if (aiEnabled) try {
+    await enqueueJob(env.JOB_ROOMS, `app:${env.DEEPSPACE_APP_ID}`, ANSWER_JOB_TYPE, { questionId }, {
+      maxAttempts: 1,
+      enqueuedBy: userId,
+    })
+  } catch (err) {
+    // Never leave the student on a spinner: the question keeps its place.
+    console.warn(`[submitQuestion] q=${questionId} enqueue failed: ${err instanceof Error ? err.name : 'error'}`)
+    await tools.update<Question>('questions', questionId, { aiStatus: 'error' })
+  }
+  return { success: true, data: { recordId: questionId } }
 }
 
 /**
@@ -124,7 +147,60 @@ const leaveQueue: ActionHandler<Env> = async ({ userId, params, tools }) => {
   return { success: true, data: { recordId: questionId } }
 }
 
+/**
+ * Load the caller's OWN open question, or return the refusal. Ownership is
+ * checked here because actions run RBAC-off.
+ */
+async function loadOwnOpenQuestion(
+  tools: ActionTools,
+  userId: string,
+  rawId: unknown,
+): Promise<{ ok: true; id: string; data: Question } | { ok: false; res: { success: false; code: string; error: string } }> {
+  if (isAnonymousUserId(userId)) return { ok: false, res: { success: false, code: 'anonymous', error: 'Sign in first.' } }
+  const id = asString(rawId)
+  if (!id) return { ok: false, res: { success: false, code: 'invalid_input', error: 'Missing questionId.' } }
+  const got = await tools.get<Question>('questions', id)
+  if (!got.success) return { ok: false, res: { success: false, code: 'not_found', error: 'Question not found.' } }
+  const data = got.data.record.data
+  if (data.studentId !== userId) {
+    return { ok: false, res: { success: false, code: 'forbidden', error: 'You can only update your own question.' } }
+  }
+  if (!QUESTION_OPEN_STATUSES.includes(data.status as QuestionStatus)) {
+    return { ok: false, res: { success: false, code: 'not_open', error: 'This question is not in the queue.' } }
+  }
+  return { ok: true, id, data }
+}
+
+/**
+ * markSolved({ questionId }) — the owner says the AI answer solved it. The
+ * question leaves the line, so its position is zeroed HERE before recompute.
+ */
+const markSolved: ActionHandler<Env> = async ({ userId, params, tools }) => {
+  const q = await loadOwnOpenQuestion(tools, userId, params.questionId)
+  if (!q.ok) return q.res
+  const updated = await tools.update<Question>('questions', q.id, {
+    status: 'solved',
+    aiFeedback: 'helped',
+    queuePosition: 0,
+    peopleAhead: 0,
+  })
+  if (!updated.success) return updated
+  await recomputeQueue(queueStoreFromTools(tools))
+  return { success: true, data: { recordId: q.id } }
+}
+
+/** stillNeedHelp({ questionId }) — flag for the TA; place in line is unchanged. */
+const stillNeedHelp: ActionHandler<Env> = async ({ userId, params, tools }) => {
+  const q = await loadOwnOpenQuestion(tools, userId, params.questionId)
+  if (!q.ok) return q.res
+  const updated = await tools.update<Question>('questions', q.id, { aiFeedback: 'needs_help' })
+  if (!updated.success) return updated
+  return { success: true, data: { recordId: q.id } }
+}
+
 export const questionActions: Record<string, ActionHandler<Env>> = {
   submitQuestion,
   leaveQueue,
+  markSolved,
+  stillNeedHelp,
 }

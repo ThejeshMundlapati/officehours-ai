@@ -36,6 +36,18 @@ export const questionsSchema: CollectionSchema = {
     { name: 'peopleAhead', storage: 'number', interpretation: 'plain' },
     { name: 'collaborators', storage: 'text', interpretation: { kind: 'json' } },
     { name: 'createdAt', storage: 'text', interpretation: 'plain' },
+    // Phase 5 — AI answer, written ONLY by server code (the answer-question
+    // job and the markSolved/stillNeedHelp actions). Same row-level visibility
+    // as the question: the owning student and staff collaborators.
+    {
+      name: 'aiStatus',
+      storage: 'text',
+      interpretation: { kind: 'select', options: ['pending', 'answered', 'not_covered', 'error'] },
+    },
+    { name: 'aiAnswer', storage: 'text', interpretation: 'plain', maxLength: 4000 },
+    { name: 'aiCitations', storage: 'text', interpretation: { kind: 'json' } },
+    // '' | 'helped' | 'needs_help' (plain text: '' is not a select option).
+    { name: 'aiFeedback', storage: 'text', interpretation: 'plain' },
   ],
   permissions: {
     viewer: { read: false, create: false, update: false, delete: false },

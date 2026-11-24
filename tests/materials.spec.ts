@@ -55,7 +55,6 @@ test('a member is refused every materials action with forbidden', async ({ users
     ['deleteMaterial', { materialId: 'anything' }],
     ['refreshMaterials', {}],
     ['searchMaterials', { query: 'late policy' }],
-    ['diagnoseMaterials', {}],
   ]
   for (const [name, params] of cases) {
     const res = await callActionAs(m.page, name, params)

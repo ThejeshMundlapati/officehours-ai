@@ -46,7 +46,17 @@ export interface Question {
   /** Snapshot of staff userIds (collaboratorsField) so TAs can read it. */
   collaborators: string[]
   createdAt: string
+  /** AI answer state (Phase 5). Written only by server code. */
+  aiStatus?: AiStatus
+  aiAnswer?: string
+  /** Filenames of course materials the answer cites. */
+  aiCitations?: string[]
+  aiFeedback?: AiFeedback
 }
+
+export type AiStatus = 'pending' | 'answered' | 'not_covered' | 'error'
+export type AiFeedback = '' | 'helped' | 'needs_help'
+export const AI_ANSWER_MAX = 4000
 
 /** Public queue counters. Single record, recordId 'global'. */
 export interface QueueStats {

@@ -68,13 +68,17 @@ export class AppCronRoom extends CronRoom<Env> {
 /** Runs durable background work defined in src/jobs.ts. */
 export class AppJobRoom extends JobRoom<Env> {
   constructor(state: DurableObjectState, env: Env) {
-    super(state, env, {
-      authorizeWrite: async (user) => {
-        if (user.userId.startsWith('anon-')) return false
-        const role = await resolveAppRole(env, user.userId)
-        return role === 'member' || role === 'admin'
-      },
-    })
+    // Admin-only socket access. The only job type (answer-question) spends
+    // owner credits, so members must not enqueue/cancel/retry it from a
+    // client, nor observe the queue (guides/background-jobs "Who can enqueue":
+    // "Paid jobs stay owner-only"). Server code enqueues via enqueueJob, which
+    // uses the DO's internal /enqueue path and is unaffected.
+    const adminOnly = async (user: { userId: string }) => {
+      if (user.userId.startsWith('anon-')) return false
+      if (user.userId === env.OWNER_USER_ID) return true
+      return (await resolveAppRole(env, user.userId)) === 'admin'
+    }
+    super(state, env, { authorizeWrite: adminOnly, authorizeRead: adminOnly })
   }
 
   protected async onJob(job: Job, context: JobContext): Promise<unknown> {

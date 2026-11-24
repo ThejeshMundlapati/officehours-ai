@@ -15,7 +15,7 @@ import type { ActionHandler, ActionTools } from 'deepspace/worker'
 import type { Env } from '../../worker'
 import type { Question, Staff } from '../lib/types'
 import { recomputeQueue, queueStoreFromTools, listOpenQuestions } from './queue'
-import { isAdmin } from './auth'
+import { isAdmin, isTestAccount } from './auth'
 
 const SETTINGS_INVITE_KEY = 'ta_invite_code'
 // Unambiguous alphabet (no 0/O/1/I/L). 32 chars divides 256 evenly → no modulo bias.
@@ -30,13 +30,6 @@ function generateInviteCode(): string {
   let out = ''
   for (let i = 0; i < INVITE_CODE_LENGTH; i++) out += INVITE_CODE_ALPHABET[bytes[i] % INVITE_CODE_ALPHABET.length]
   return out
-}
-
-/** True only if the caller's users-record email ends with '@deepspace.test'. */
-async function isTestAccount(tools: ActionTools, userId: string): Promise<boolean> {
-  const row = await tools.get<{ email?: string }>('users', userId)
-  const email = row.success ? asString(row.data.record.data.email).toLowerCase() : ''
-  return email.endsWith('@deepspace.test')
 }
 
 async function readInviteCode(tools: ActionTools): Promise<string> {

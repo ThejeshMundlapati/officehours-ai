@@ -104,7 +104,14 @@ export default function TaQueuePage() {
                   >
                     <div className="mb-1 flex items-center justify-between gap-3">
                       <h2 className="font-semibold">{r.data.title}</h2>
-                      <Badge>{STATUS_LABEL[r.data.status]}</Badge>
+                      <div className="flex shrink-0 items-center gap-2">
+                        {r.data.aiFeedback === 'needs_help' && (
+                          <Badge data-testid="ta-needs-help" variant="warning">
+                            Still needs help
+                          </Badge>
+                        )}
+                        <Badge>{STATUS_LABEL[r.data.status]}</Badge>
+                      </div>
                     </div>
                     <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span data-testid="ta-student-name" className="font-medium text-foreground">
@@ -117,6 +124,7 @@ export default function TaQueuePage() {
                       <span>{waited(r.data.createdAt, now)}</span>
                     </div>
                     <p className="whitespace-pre-wrap text-sm text-foreground">{r.data.body}</p>
+                    <TaAiSummary question={r.data} />
                   </li>
                 ))}
               </ul>
@@ -125,5 +133,33 @@ export default function TaQueuePage() {
         )}
       </div>
     </div>
+  )
+}
+
+const AI_STATUS_NOTE: Record<string, string> = {
+  pending: 'AI is checking the course materials…',
+  not_covered: 'Not covered in the course materials.',
+  error: 'AI check failed.',
+}
+
+/** Collapsed AI answer + citations on a TA card. */
+function TaAiSummary({ question }: { question: Question }) {
+  const status = question.aiStatus
+  if (!status) return null
+  if (status !== 'answered') {
+    return (
+      <p data-testid="ta-ai-note" className="mt-3 text-xs text-muted-foreground">
+        {AI_STATUS_NOTE[status] ?? ''}
+      </p>
+    )
+  }
+  const citations = Array.isArray(question.aiCitations) ? question.aiCitations : []
+  return (
+    <details data-testid="ta-ai-answer" className="mt-3 rounded-md border border-border bg-background p-3 text-sm">
+      <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
+        AI answer{citations.length > 0 ? ` · cites ${citations.join(', ')}` : ''}
+      </summary>
+      <p className="mt-2 whitespace-pre-wrap text-foreground">{question.aiAnswer}</p>
+    </details>
   )
 }

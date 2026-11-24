@@ -12,6 +12,7 @@ import { buildCronContext, knowledge } from 'deepspace/worker'
 import type { Env } from '../worker'
 import { recomputeQueue, queueStoreFromCron } from './actions/queue'
 import { syncPendingMaterials, materialStoreFromCron } from './actions/materials'
+import { expireStalePendingAnswers } from './actions/answer'
 
 export const tasks: CronTask[] = [
   // Safety net. Every queue-mutating action already recomputes synchronously;
@@ -30,6 +31,13 @@ export async function runTask(name: string, env: Env): Promise<void> {
       await syncPendingMaterials(materialStoreFromCron(ctx.records), knowledge(env))
     } catch (err) {
       console.warn(`[cron] materials sync failed: ${err instanceof Error ? err.message : String(err)}`)
+    }
+    // Third step: an answer-question job that crashed (maxAttempts 1) would
+    // leave aiStatus 'pending' forever; flip those to 'error' after 20 min.
+    try {
+      await expireStalePendingAnswers(ctx.records)
+    } catch (err) {
+      console.warn(`[cron] stale AI sweep failed: ${err instanceof Error ? err.name : 'error'}`)
     }
   }
 }
