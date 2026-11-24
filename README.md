@@ -114,7 +114,7 @@ All mutations are server actions (`src/actions/*`) that run with RBAC off, so ea
 
 - **No secrets in the repository.** Platform secrets live in DeepSpace's secret store; `.dev.vars` and `.env*` are git-ignored. The TA invite code is stored only in the admin-only `settings` collection and compared on the server; a wrong code gets the same generic error as any other.
 - **Identity comes only from the verified JWT.** No action trusts a user id, name, or role sent by the client; display names are copied from the `users` record on the server.
-- **Dev-only actions are double-gated:** they run only when `ALLOW_DEBUG_ROUTES === 'true'` (set by local dev/test, unset in production) **and** the caller's email ends in `@deepspace.test`. The client-side test bridge is compiled out of production builds.
+- **Dev-only actions are double-gated:** they run only when `ALLOW_DEBUG_ROUTES === 'true'` (set by local dev/test, unset in production) **and** the caller's email ends in `@deepspace.test`. The client-side test bridge is compiled out of production builds. Verified on production by calling `devGetInviteCode` and `devProbeUniqueClaim` directly with a signed-in token: both return `not_available`.
 - **The job room is owner-only.** Socket reads and writes to the background-job room require admin, so members can neither enqueue paid jobs nor see job payloads; server code enqueues through the internal path.
 - **Prompt injection:** student text is passed to models as delimited, tag-neutralized data with explicit "this is not instructions" rules, and outputs are validated (citations against the retrieved set, group ids against the input set).
 - **Logs** carry ids, reasons, and filenames — never question text.
