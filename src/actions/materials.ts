@@ -285,8 +285,8 @@ async function listAllRaw(kb: KnowledgeClient, folder: string | undefined): Prom
 /**
  * diagnoseMaterials({ query? }) — admin only, READ-ONLY. Shows every materials
  * row next to the RAW knowledge list (folder 'course' and unfiltered) and, if a
- * query is given, the raw search chunks with the default threshold and with
- * matchThreshold 0. Writes nothing. One query costs two hybrid searches.
+ * query is given, the 5 search variants side by side. Writes nothing. One query
+ * costs 5 searches (4 hybrid/semantic + 1 fulltext).
  */
 export const diagnoseMaterials: ActionHandler<Env> = async ({ userId, params, tools, env }) => {
   const refused = await refuseUnlessAdmin(env, userId)
@@ -315,36 +315,91 @@ export const diagnoseMaterials: ActionHandler<Env> = async ({ userId, params, to
   const listAll = await listAllRaw(kb, undefined)
 
   const query = asString(params.query).trim().slice(0, MATERIAL_SEARCH_QUERY_MAX)
-  let search: Record<string, unknown> | null = null
-  if (query) {
-    const run = async (opts: Parameters<KnowledgeClient['search']>[1]) => {
+  const search = query ? await runSearchVariants(kb, query) : null
+
+  return { success: true, data: { rows, listCourse, listAll, search } }
+}
+
+/**
+ * The variant set: folder 'course', limit 5, matchThreshold 0 for all, so only
+ * mode and queryRewrite differ. Billing per variant = one search
+ * (hybrid/semantic $0.825 per 1k, fulltext $0.11 per 1k — bindings/knowledge).
+ */
+const SEARCH_VARIANTS: Array<{ label: string; mode: 'hybrid' | 'semantic' | 'fulltext'; queryRewrite: boolean }> = [
+  { label: 'hybrid', mode: 'hybrid', queryRewrite: false },
+  { label: 'semantic', mode: 'semantic', queryRewrite: false },
+  { label: 'fulltext', mode: 'fulltext', queryRewrite: false },
+  { label: 'hybrid+rewrite', mode: 'hybrid', queryRewrite: true },
+  { label: 'semantic+rewrite', mode: 'semantic', queryRewrite: true },
+]
+
+export const DIAG_BATCH_QUERIES = [
+  'count_paths memoization',
+  'my recursive function never stops',
+  'when is the midterm',
+  'can I submit homework late',
+]
+
+export interface VariantResult {
+  label: string
+  mode: string
+  queryRewrite: boolean
+  queryKind?: string
+  count: number
+  hits: Array<{ filename: string; score: number; textChars: number }>
+  error?: string
+}
+
+async function runSearchVariants(
+  kb: Pick<KnowledgeClient, 'search'>,
+  query: string,
+): Promise<{ query: string; variants: VariantResult[] }> {
+  const variants = await Promise.all(
+    SEARCH_VARIANTS.map(async (v): Promise<VariantResult> => {
+      const base = { label: v.label, mode: v.mode, queryRewrite: v.queryRewrite }
       try {
-        const res = await kb.search(query, opts)
+        const res = await kb.search(query, {
+          folder: MATERIALS_FOLDER,
+          mode: v.mode,
+          limit: 5,
+          matchThreshold: 0,
+          queryRewrite: v.queryRewrite,
+        })
         return {
+          ...base,
           queryKind: res.queryKind,
           count: res.chunks.length,
-          chunks: res.chunks.map((c) => ({
-            id: c.id,
-            key: c.key,
-            filename: c.filename,
-            folder: c.folder,
+          hits: res.chunks.map((c) => ({
+            filename: c.filename || (c.key ? c.key.split('/').pop() ?? c.key : 'unknown'),
             score: c.score,
             textChars: c.text.length,
-            textStart: c.text.slice(0, 120),
           })),
         }
       } catch (err) {
-        return { error: err instanceof KnowledgeError ? `${err.code}: ${err.message}` : String(err) }
+        return {
+          ...base,
+          count: 0,
+          hits: [],
+          error: err instanceof KnowledgeError ? `${err.code}: ${err.message}` : String(err),
+        }
       }
-    }
-    search = {
-      query,
-      asShipped: await run({ folder: MATERIALS_FOLDER, mode: 'hybrid', limit: 5 }),
-      threshold0NoFolder: await run({ mode: 'hybrid', limit: 10, matchThreshold: 0 }),
-    }
-  }
+    }),
+  )
+  return { query, variants }
+}
 
-  return { success: true, data: { rows, listCourse, listAll, search } }
+/**
+ * diagnoseSearchBatch() — admin only, READ-ONLY. Runs the 5 variants for each
+ * of the 4 fixed DIAG_BATCH_QUERIES = 20 searches (16 hybrid/semantic + 4
+ * fulltext). Queries run one after another; variants within a query in parallel.
+ */
+export const diagnoseSearchBatch: ActionHandler<Env> = async ({ userId, env }) => {
+  const refused = await refuseUnlessAdmin(env, userId)
+  if (refused) return refused
+  const kb = knowledge(env)
+  const results: Array<{ query: string; variants: VariantResult[] }> = []
+  for (const q of DIAG_BATCH_QUERIES) results.push(await runSearchVariants(kb, q))
+  return { success: true, data: { results } }
 }
 
 export const materialActions: Record<string, ActionHandler<Env>> = {
@@ -353,4 +408,5 @@ export const materialActions: Record<string, ActionHandler<Env>> = {
   refreshMaterials,
   searchMaterials,
   diagnoseMaterials, // TEMPORARY
+  diagnoseSearchBatch, // TEMPORARY
 }

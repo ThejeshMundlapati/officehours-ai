@@ -36,6 +36,8 @@ import {
   refreshMaterials,
   searchMaterials,
   diagnoseMaterials,
+  diagnoseSearchBatch,
+  DIAG_BATCH_QUERIES,
   syncPendingMaterials,
 } from './materials'
 import type { ActionTools } from 'deepspace/worker'
@@ -74,6 +76,7 @@ describe('admin gate comes first', () => {
     ['refreshMaterials', refreshMaterials, {}],
     ['searchMaterials', searchMaterials, { query: 'late policy' }],
     ['diagnoseMaterials', diagnoseMaterials, { query: 'late policy' }],
+    ['diagnoseSearchBatch', diagnoseSearchBatch, {}],
   ] as const)('%s refuses a member with forbidden and never touches knowledge', async (_n, h, params) => {
     const res = await call(h, 'member-1', params)
     expect(res).toMatchObject({ success: false, code: 'forbidden' })
@@ -118,6 +121,21 @@ describe('searchMaterials input validation (as admin)', () => {
     const res = await call(searchMaterials, OWNER, { query: '   ' })
     expect(res).toMatchObject({ success: false, code: 'invalid_input' })
     expect(kb.search).not.toHaveBeenCalled()
+  })
+})
+
+describe('diagnoseSearchBatch (as admin)', () => {
+  it('runs 5 variants × 4 queries with folder course, limit 5, threshold 0', async () => {
+    kb.search.mockResolvedValue({ chunks: [], queryKind: 'text' })
+    const res = await call(diagnoseSearchBatch, OWNER, {})
+    expect(res.success).toBe(true)
+    expect(kb.search).toHaveBeenCalledTimes(5 * DIAG_BATCH_QUERIES.length)
+    const opts = kb.search.mock.calls.map((c) => c[1] as Record<string, unknown>)
+    for (const o of opts) expect(o).toMatchObject({ folder: 'course', limit: 5, matchThreshold: 0 })
+    const combos = new Set(opts.map((o) => `${o.mode}/${o.queryRewrite}`))
+    expect(combos).toEqual(
+      new Set(['hybrid/false', 'semantic/false', 'fulltext/false', 'hybrid/true', 'semantic/true']),
+    )
   })
 })
 
