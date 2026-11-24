@@ -10,7 +10,7 @@
  * otherwise receive every row) only ever sees their OWN question here.
  */
 
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { useQuery, useMutations, useUser } from 'deepspace'
 import { Button, Input, Textarea, Label, Badge, useToast } from '@/components/ui'
 import { callAction } from '@/lib/actions'
@@ -185,21 +185,14 @@ export default function QueuePage() {
  * DEV-only tooling, tree-shaken out of production builds (`import.meta.env.DEV`):
  *  - an RBAC probe that proves a DIRECT client create is rejected — the result
  *    is shown next to the signed-in user's platform ROLE, because a direct
- *    create only fails for non-admin roles (admins have create:true);
- *  - a `window.__callAction` bridge so e2e tests can invoke a server action as
- *    the signed-in user (e.g. to exercise paths the UI deliberately hides).
+ *    create only fails for non-admin roles (admins have create:true).
+ *
+ * The `window.__callAction` test bridge is mounted separately in the protected
+ * layout (src/components/DevActionBridge.tsx), also DEV-only.
  */
 function DevTools({ role }: { role: string }) {
   const { createConfirmed, ready } = useMutations<Question>('questions')
   const [result, setResult] = useState('')
-
-  useEffect(() => {
-    const w = window as unknown as { __callAction?: typeof callAction }
-    w.__callAction = callAction
-    return () => {
-      delete w.__callAction
-    }
-  }, [])
 
   async function run() {
     setResult('')

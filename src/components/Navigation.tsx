@@ -10,7 +10,7 @@
 
 import { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
-import { AuthOverlay, useAuthProfileReady, signOut } from 'deepspace'
+import { AuthOverlay, useAuthProfileReady, signOut, useQuery } from 'deepspace'
 import { ChevronDown, LogOut, Menu, X } from 'lucide-react'
 import { APP_NAME } from '../constants'
 import type { Role } from '../constants'
@@ -37,6 +37,11 @@ export default function Navigation() {
   const profileReady = !isSignedIn || (!userLoading && !!user)
   const userRole = (user?.role ?? 'anonymous') as Role | 'anonymous'
 
+  // Staff membership is an app concept (the `staff` collection), not a platform
+  // role, so it can't be expressed via `item.roles`. Admins are always staff.
+  const { records: staff } = useQuery('staff')
+  const isStaff = userRole === 'admin' || (!!user?.id && staff.some((r) => r.recordId === user.id))
+
   // Close the mobile menu when navigating
   useEffect(() => {
     setMobileMenuOpen(false)
@@ -44,6 +49,7 @@ export default function Navigation() {
 
   const visibleNav = nav.filter((item) => {
     if (item.devOnly && !import.meta.env.DEV) return false
+    if (item.staffOnly) return profileReady && isStaff
     if (!item.roles) return true
     if (!profileReady) return false
     if (userRole === 'admin') return true

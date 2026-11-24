@@ -17,10 +17,12 @@ import { useState } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 import { AuthGate, AuthOverlay } from 'deepspace'
 import { Button } from '@/components/ui'
+import DevActionBridge from '@/components/DevActionBridge'
 
 export default function ProtectedLayout() {
   return (
     <AuthGate fallback={<SignedOutPanel />}>
+      {import.meta.env.DEV && <DevActionBridge />}
       <Outlet />
     </AuthGate>
   )
