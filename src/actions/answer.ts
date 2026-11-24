@@ -133,7 +133,7 @@ Respond with ONLY a JSON object, no code fences and no other text:
 {"covered": boolean, "answer": string, "citations": string[]}`
 
 /** Neutralize tag-like sequences so student text can't close our delimiters. */
-function neutralize(text: string): string {
+export function neutralize(text: string): string {
   return text.replace(/</g, '‹').replace(/>/g, '›')
 }
 

@@ -110,6 +110,19 @@ export interface MaterialSearchHit {
   excerpt: string
 }
 
+/** User-defined fields of a `question_groups` record (staff/admin only). */
+export interface QuestionGroup {
+  [key: string]: unknown
+  /** ≤ 80 chars; summarizes several students' questions — never shown to students. */
+  label: string
+  questionIds: string[]
+  /** Staff ids (collaboratorsField) so TAs can read it. */
+  collaborators: string[]
+  ownerId: string
+  active: number
+  createdAt: string
+}
+
 /** User-defined fields of a `claims` record (admin-only). */
 export interface Claim {
   [key: string]: unknown

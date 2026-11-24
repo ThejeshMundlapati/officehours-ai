@@ -375,6 +375,21 @@ function DevTools({ role }: { role: string }) {
       <span data-testid="rbac-probe-role" className="ml-3 font-mono">
         role: {role}
       </span>
+      <GroupsReadProbe />
     </div>
+  )
+}
+
+/**
+ * DEV-only RBAC probe: how many `question_groups` rows does a direct client
+ * subscription return for the signed-in user? Students must see 0 (labels
+ * summarize other students' questions); staff see the active groups.
+ */
+function GroupsReadProbe() {
+  const { records, status } = useQuery('question_groups')
+  return (
+    <span data-testid="groups-probe" data-status={status} className="ml-3 font-mono">
+      groups visible: <span data-testid="groups-probe-count">{status === 'loading' ? '…' : records.length}</span>
+    </span>
   )
 }

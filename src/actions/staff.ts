@@ -18,6 +18,7 @@ import { recomputeQueue, queueStoreFromTools, listOpenQuestions } from './queue'
 import { isAdmin, isTestAccount } from './auth'
 import { closeClaimIfAny, releaseClaimsForTa } from './claims'
 import { releaseActiveSlot } from './active'
+import { syncGroupCollaborators } from './groups'
 
 const SETTINGS_INVITE_KEY = 'ta_invite_code'
 // Unambiguous alphabet (no 0/O/1/I/L). 32 chars divides 256 evenly → no modulo bias.
@@ -69,6 +70,7 @@ async function doRemoveStaff(tools: ActionTools, userId: string): Promise<void> 
   await releaseClaimsForTa(tools, userId)
   await tools.remove('staff', userId)
   await mutateOpenCollaborators(tools, userId, 'remove')
+  await syncGroupCollaborators(tools, userId, 'remove')
 }
 
 /** rotateInviteCode() — admin only. Generates and stores a fresh code. */
@@ -110,6 +112,7 @@ const joinAsStaff: ActionHandler<Env> = async ({ userId, params, tools }) => {
   if (!upsert.success) return upsert
 
   await mutateOpenCollaborators(tools, userId, 'add')
+  await syncGroupCollaborators(tools, userId, 'add')
   return { success: true, data: { rank: 'ta' } }
 }
 

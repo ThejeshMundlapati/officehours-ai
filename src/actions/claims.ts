@@ -71,13 +71,18 @@ export async function closeClaimIfAny(tools: ActionTools, questionId: string): P
   if (claim && claim.data.active === 1) await tools.update<Claim>('claims', claim.recordId, { active: 0 })
 }
 
-/** claimQuestion({ questionId }) — staff only; insert the claim row FIRST. */
-const claimQuestion: ActionHandler<Env> = async ({ userId, params, tools, env }) => {
-  if (isAnonymousUserId(userId)) return { success: false, code: 'anonymous', error: 'Sign in first.' }
-  if (!(await isStaffOrAdmin(env, tools, userId))) {
-    return { success: false, code: 'forbidden', error: 'Only TAs can claim questions.' }
-  }
-  const q = await loadQuestion(tools, params.questionId)
+/**
+ * Claim ONE question for `userId` (caller already verified as staff). Inserts
+ * the claim row FIRST (uniqueOn questionId). Does not recompute the queue —
+ * callers do that once. Shared by claimQuestion and claimGroup.
+ */
+export async function claimOne(
+  tools: ActionTools,
+  userId: string,
+  taName: string,
+  questionId: string,
+): Promise<{ ok: true; claimId: string } | Refusal> {
+  const q = await loadQuestion(tools, questionId)
   if ('success' in q) return q
   if (q.data.studentId === userId) {
     return { success: false, code: 'own_question', error: 'You cannot claim your own question.' }
@@ -89,7 +94,6 @@ const claimQuestion: ActionHandler<Env> = async ({ userId, params, tools, env })
     return { success: false, code: 'already_claimed', error: 'Another TA already claimed this question.' }
   }
 
-  const taName = await displayName(tools, userId, 'TA')
   // No explicit recordId: an id would make this an upsert, defeating uniqueOn.
   const inserted = await tools.create<Claim>('claims', {
     questionId: q.id,
@@ -103,7 +107,7 @@ const claimQuestion: ActionHandler<Env> = async ({ userId, params, tools, env })
     console.info(`[claimQuestion] q=${q.id} duplicate insert refused: ${JSON.stringify(inserted)}`)
     return { success: false, code: 'already_claimed', error: 'Another TA just claimed this question.' }
   }
-  if (!inserted.success) return inserted
+  if (!inserted.success) return { success: false, code: 'error', error: inserted.error }
 
   // We own the claim. Re-check the question didn't leave the queue meanwhile.
   const now = await tools.get<Question>('questions', q.id)
@@ -122,10 +126,32 @@ const claimQuestion: ActionHandler<Env> = async ({ userId, params, tools, env })
   })
   if (!updated.success) {
     await tools.remove('claims', inserted.data.recordId)
-    return updated
+    return { success: false, code: 'error', error: updated.error }
   }
+  return { ok: true, claimId: inserted.data.recordId }
+}
+
+/** Staff gate + the caller's display name (snapshotted onto claims). */
+export async function staffContext(
+  env: Env,
+  tools: ActionTools,
+  userId: string,
+): Promise<{ ok: true; taName: string } | Refusal> {
+  if (isAnonymousUserId(userId)) return { success: false, code: 'anonymous', error: 'Sign in first.' }
+  if (!(await isStaffOrAdmin(env, tools, userId))) {
+    return { success: false, code: 'forbidden', error: 'Only TAs can do that.' }
+  }
+  return { ok: true, taName: await displayName(tools, userId, 'TA') }
+}
+
+/** claimQuestion({ questionId }) — staff only. */
+const claimQuestion: ActionHandler<Env> = async ({ userId, params, tools, env }) => {
+  const staff = await staffContext(env, tools, userId)
+  if ('success' in staff) return staff
+  const r = await claimOne(tools, userId, staff.taName, asString(params.questionId))
+  if ('success' in r) return r
   await recomputeQueue(queueStoreFromTools(tools))
-  return { success: true, data: { questionId: q.id, claimId: inserted.data.recordId } }
+  return { success: true, data: { questionId: asString(params.questionId), claimId: r.claimId } }
 }
 
 /** Shared gate for release/resolve: the question must be claimed, by the caller (or caller is admin). */
@@ -156,20 +182,35 @@ const releaseClaim: ActionHandler<Env> = async ({ userId, params, tools, env }) 
   return { success: true, data: { questionId: r.id } }
 }
 
-/** resolveQuestion({ questionId }) — done; leaves the queue; claim kept as history. */
-const resolveQuestion: ActionHandler<Env> = async ({ userId, params, tools, env }) => {
-  const r = await loadOwnClaim(env, tools, userId, params.questionId)
+/**
+ * Resolve ONE claimed question (caller must be the claimant or admin). No
+ * queue recompute — callers do that once. Shared by resolveQuestion/resolveGroup.
+ */
+export async function resolveOne(
+  env: Env,
+  tools: ActionTools,
+  userId: string,
+  questionId: string,
+): Promise<{ ok: true } | Refusal> {
+  const r = await loadOwnClaim(env, tools, userId, questionId)
   if ('success' in r) return r
   const updated = await tools.update<Question>('questions', r.id, {
     status: 'solved',
     queuePosition: 0,
     peopleAhead: 0,
   })
-  if (!updated.success) return updated
+  if (!updated.success) return { success: false, code: 'error', error: updated.error }
   if (r.claim) await tools.update<Claim>('claims', r.claim.recordId, { active: 0 })
   await releaseActiveSlot(tools, r.data.studentId)
+  return { ok: true }
+}
+
+/** resolveQuestion({ questionId }) — done; leaves the queue; claim kept as history. */
+const resolveQuestion: ActionHandler<Env> = async ({ userId, params, tools, env }) => {
+  const r = await resolveOne(env, tools, userId, asString(params.questionId))
+  if ('success' in r) return r
   await recomputeQueue(queueStoreFromTools(tools))
-  return { success: true, data: { questionId: r.id } }
+  return { success: true, data: { questionId: asString(params.questionId) } }
 }
 
 /**
