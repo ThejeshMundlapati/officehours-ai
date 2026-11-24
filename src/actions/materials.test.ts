@@ -30,7 +30,14 @@ vi.mock('deepspace/worker', () => ({
   },
 }))
 
-import { uploadMaterial, deleteMaterial, refreshMaterials, searchMaterials, syncPendingMaterials } from './materials'
+import {
+  uploadMaterial,
+  deleteMaterial,
+  refreshMaterials,
+  searchMaterials,
+  diagnoseMaterials,
+  syncPendingMaterials,
+} from './materials'
 import type { ActionTools } from 'deepspace/worker'
 import type { Env } from '../../worker'
 import { MATERIAL_TEXT_MAX_BYTES } from '../lib/materials'
@@ -66,6 +73,7 @@ describe('admin gate comes first', () => {
     ['deleteMaterial', deleteMaterial, { materialId: 'm1' }],
     ['refreshMaterials', refreshMaterials, {}],
     ['searchMaterials', searchMaterials, { query: 'late policy' }],
+    ['diagnoseMaterials', diagnoseMaterials, { query: 'late policy' }],
   ] as const)('%s refuses a member with forbidden and never touches knowledge', async (_n, h, params) => {
     const res = await call(h, 'member-1', params)
     expect(res).toMatchObject({ success: false, code: 'forbidden' })

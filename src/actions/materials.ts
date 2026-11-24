@@ -257,9 +257,100 @@ export const searchMaterials: ActionHandler<Env> = async ({ userId, params, env 
   }
 }
 
+// ── TEMPORARY diagnostic (Phase 4 search investigation) — remove after ──────
+
+type RawList = { items: KnowledgeItem[]; pages: number; total?: number; totalPages?: number; error?: string }
+
+async function listAllRaw(kb: KnowledgeClient, folder: string | undefined): Promise<RawList> {
+  const items: KnowledgeItem[] = []
+  let pages = 0
+  let total: number | undefined
+  let totalPages: number | undefined
+  try {
+    for (let page = 1; page <= LIST_MAX_PAGES; page++) {
+      const res = await kb.list({ ...(folder ? { folder } : {}), page, perPage: LIST_PER_PAGE })
+      pages = page
+      total = res.total
+      totalPages = res.totalPages
+      items.push(...res.items)
+      if (res.items.length < LIST_PER_PAGE || (res.totalPages !== undefined && page >= res.totalPages)) break
+    }
+    return { items, pages, total, totalPages }
+  } catch (err) {
+    const msg = err instanceof KnowledgeError ? `${err.code}: ${err.message}` : String(err)
+    return { items, pages, total, totalPages, error: msg }
+  }
+}
+
+/**
+ * diagnoseMaterials({ query? }) — admin only, READ-ONLY. Shows every materials
+ * row next to the RAW knowledge list (folder 'course' and unfiltered) and, if a
+ * query is given, the raw search chunks with the default threshold and with
+ * matchThreshold 0. Writes nothing. One query costs two hybrid searches.
+ */
+export const diagnoseMaterials: ActionHandler<Env> = async ({ userId, params, tools, env }) => {
+  const refused = await refuseUnlessAdmin(env, userId)
+  if (refused) return refused
+
+  const rows: Array<{ recordId: string } & Partial<Material>> = []
+  for (const status of MATERIAL_STATUSES) {
+    const res = await tools.query<Material>('materials', { where: { status }, limit: PENDING_QUERY_LIMIT })
+    if (res.success) {
+      for (const r of res.data.records) {
+        rows.push({
+          recordId: r.recordId,
+          filename: r.data.filename,
+          knowledgeItemId: r.data.knowledgeItemId,
+          status: r.data.status,
+          chunksCount: r.data.chunksCount,
+          sizeBytes: r.data.sizeBytes,
+          createdAt: r.data.createdAt,
+        })
+      }
+    }
+  }
+
+  const kb = knowledge(env)
+  const listCourse = await listAllRaw(kb, MATERIALS_FOLDER)
+  const listAll = await listAllRaw(kb, undefined)
+
+  const query = asString(params.query).trim().slice(0, MATERIAL_SEARCH_QUERY_MAX)
+  let search: Record<string, unknown> | null = null
+  if (query) {
+    const run = async (opts: Parameters<KnowledgeClient['search']>[1]) => {
+      try {
+        const res = await kb.search(query, opts)
+        return {
+          queryKind: res.queryKind,
+          count: res.chunks.length,
+          chunks: res.chunks.map((c) => ({
+            id: c.id,
+            key: c.key,
+            filename: c.filename,
+            folder: c.folder,
+            score: c.score,
+            textChars: c.text.length,
+            textStart: c.text.slice(0, 120),
+          })),
+        }
+      } catch (err) {
+        return { error: err instanceof KnowledgeError ? `${err.code}: ${err.message}` : String(err) }
+      }
+    }
+    search = {
+      query,
+      asShipped: await run({ folder: MATERIALS_FOLDER, mode: 'hybrid', limit: 5 }),
+      threshold0NoFolder: await run({ mode: 'hybrid', limit: 10, matchThreshold: 0 }),
+    }
+  }
+
+  return { success: true, data: { rows, listCourse, listAll, search } }
+}
+
 export const materialActions: Record<string, ActionHandler<Env>> = {
   uploadMaterial,
   deleteMaterial,
   refreshMaterials,
   searchMaterials,
+  diagnoseMaterials, // TEMPORARY
 }
