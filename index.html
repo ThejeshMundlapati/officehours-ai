@@ -4,12 +4,14 @@
   To switch themes, change `data-theme` to any id defined in src/themes.ts.
   Color values per theme live in src/themes.css.
 -->
-<html lang="en" data-theme="slate">
+<html lang="en" data-theme="chalk">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.ico" />
-    <title>officehours-ai</title>
+    <title>OfficeHours AI</title>
+    <meta name="theme-color" content="#f7f4ec" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0f1714" media="(prefers-color-scheme: dark)" />
     <!--
       First-paint background, keyed to the data-theme attribute above.
       Without this the browser paints white until the CSS bundle arrives —
@@ -18,10 +20,23 @@
       adding or editing themes.
     -->
     <style>
-      html { background-color: #0a0a0a; color-scheme: dark; }
-      html[data-theme="paper"] { background-color: #ffffff; color-scheme: light; }
-      /* Add one line per theme you create, mirroring its --color-background. */
+      html[data-theme="chalk"] { background-color: #f7f4ec; color-scheme: light; }
+      @media (prefers-color-scheme: dark) {
+        html[data-theme="chalk"] { background-color: #0f1714; color-scheme: dark; }
+      }
     </style>
+    <script>
+      // SDK-rendered UI (e.g. the sign-in overlay) reads data-ui-theme to pick
+      // its light/dark token set; keep it in step with the OS colour scheme.
+      (function () {
+        var mq = window.matchMedia('(prefers-color-scheme: dark)')
+        var apply = function () {
+          document.documentElement.setAttribute('data-ui-theme', mq.matches ? 'dark' : 'light')
+        }
+        apply()
+        if (mq.addEventListener) mq.addEventListener('change', apply)
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

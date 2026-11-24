@@ -8,7 +8,8 @@
 
 import { useState } from 'react'
 import { useQuery, useUser } from 'deepspace'
-import { Button, useToast } from '@/components/ui'
+import { Button, ConfirmModal, EmptyState, useToast } from '@/components/ui'
+import { UserPlus } from 'lucide-react'
 import { callAction } from '@/lib/actions'
 import type { Staff } from '@/lib/types'
 import MaterialsSection from '@/components/MaterialsSection'
@@ -24,6 +25,7 @@ export default function InstructorPage() {
   const toast = useToast()
   const [rotating, setRotating] = useState(false)
   const [removingId, setRemovingId] = useState('')
+  const [confirmRemove, setConfirmRemove] = useState<{ id: string; name: string } | null>(null)
 
   if (!isAdmin) {
     return (
@@ -55,6 +57,7 @@ export default function InstructorPage() {
     setRemovingId(id)
     const res = await callAction('removeStaff', { userId: id })
     setRemovingId('')
+    setConfirmRemove(null)
     if (res.success) toast.success('TA removed')
     else toast.error('Could not remove', res.error)
   }
@@ -91,9 +94,13 @@ export default function InstructorPage() {
         <section className="rounded-lg border border-border bg-card p-6">
           <h2 className="mb-3 text-lg font-semibold">Staff</h2>
           {staff.length === 0 ? (
-            <p data-testid="staff-empty" className="text-sm text-muted-foreground">
-              No TAs yet.
-            </p>
+            <EmptyState
+              data-testid="staff-empty"
+              className="py-8"
+              icon={<UserPlus />}
+              title="No TAs yet"
+              description="Share the invite code above. TAs appear here as soon as they join."
+            />
           ) : (
             <ul className="divide-y divide-border">
               {staff.map((r) => (
@@ -115,7 +122,7 @@ export default function InstructorPage() {
                     size="sm"
                     loading={removingId === r.recordId}
                     disabled={removingId === r.recordId}
-                    onClick={() => remove(r.recordId)}
+                    onClick={() => setConfirmRemove({ id: r.recordId, name: String(r.data.displayName || 'this TA') })}
                   >
                     Remove
                   </Button>
@@ -124,6 +131,16 @@ export default function InstructorPage() {
             </ul>
           )}
         </section>
+
+        <ConfirmModal
+          open={!!confirmRemove}
+          onClose={() => setConfirmRemove(null)}
+          onConfirm={() => confirmRemove && remove(confirmRemove.id)}
+          title={`Remove ${confirmRemove?.name ?? 'this TA'} from staff?`}
+          description="Their active claims go back into the queue at their original place, and they lose access to the TA queue."
+          confirmText="Remove"
+          loading={!!removingId}
+        />
 
         <MaterialsSection />
       </div>

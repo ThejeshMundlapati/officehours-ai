@@ -51,6 +51,7 @@ async function resetQueue(page: Page): Promise<void> {
   const leave = page.getByTestId('leave-button')
   if (await leave.isVisible().catch(() => false)) {
     await leave.click()
+    await page.getByRole('button', { name: 'Yes, leave' }).click()
     await expect(page.getByTestId('submit-form')).toBeVisible({ timeout: 15_000 })
   }
 }
@@ -69,6 +70,9 @@ test('student submits a question and can leave the queue', async ({ users }) => 
   await expect(page.getByTestId('open-question-status')).toHaveText('Waiting', { timeout: 15_000 })
 
   await page.getByTestId('leave-button').click()
+  // Leaving is destructive (you lose your place), so it is confirmed first.
+  await expect(page.getByRole('button', { name: 'Stay in line' })).toBeVisible()
+  await page.getByRole('button', { name: 'Yes, leave' }).click()
   await expect(page.getByTestId('submit-form')).toBeVisible({ timeout: 15_000 })
 })
 

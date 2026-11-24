@@ -12,7 +12,7 @@
 
 import { useMemo, useState, type FormEvent } from 'react'
 import { useQuery, useMutations, useUser } from 'deepspace'
-import { Button, Input, Textarea, Label, Badge, useToast } from '@/components/ui'
+import { Button, ConfirmModal, Input, Textarea, Label, Badge, useToast } from '@/components/ui'
 import { callAction } from '@/lib/actions'
 import { StaffOnlineCount } from '@/components/StaffPresence'
 import {
@@ -51,6 +51,7 @@ export default function QueuePage() {
   const [body, setBody] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [leaving, setLeaving] = useState(false)
+  const [confirmLeave, setConfirmLeave] = useState(false)
   const [feedbackBusy, setFeedbackBusy] = useState<'' | 'solved' | 'help'>('')
 
   // Defense in depth: never surface a row that isn't the signed-in user's own,
@@ -80,6 +81,7 @@ export default function QueuePage() {
     setLeaving(true)
     const res = await callAction('leaveQueue', { questionId: open.recordId })
     setLeaving(false)
+    setConfirmLeave(false)
     if (res.success) toast.info('Left the queue', 'Your question was removed.')
     else toast.error('Could not leave', res.error)
   }
@@ -119,8 +121,10 @@ export default function QueuePage() {
         </div>
 
         {status === 'loading' ? (
-          <div data-testid="queue-loading" className="text-sm text-muted-foreground">
-            Loading&hellip;
+          <div data-testid="queue-loading" className="space-y-3 rounded-lg border border-border bg-card p-6" aria-busy="true">
+            <div className="h-6 w-2/3 animate-pulse rounded-md bg-muted" />
+            <div className="h-4 w-1/3 animate-pulse rounded-md bg-muted" />
+            <div className="h-20 animate-pulse rounded-md bg-muted" />
           </div>
         ) : (
           <div data-testid="queue-ready">
@@ -129,8 +133,8 @@ export default function QueuePage() {
                 data-testid="open-question"
                 className="rounded-lg border border-border bg-card p-6"
               >
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <h2 data-testid="open-question-title" className="text-lg font-semibold">
+                <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                  <h2 data-testid="open-question-title" className="min-w-0 break-words text-lg font-semibold">
                     {open.data.title}
                   </h2>
                   <Badge data-testid="open-question-status">{STATUS_LABEL[open.data.status]}</Badge>
@@ -168,7 +172,7 @@ export default function QueuePage() {
                   className="mt-6"
                   disabled={leaving}
                   loading={leaving}
-                  onClick={onLeave}
+                  onClick={() => setConfirmLeave(true)}
                 >
                   Leave queue
                 </Button>
@@ -225,6 +229,17 @@ export default function QueuePage() {
             )}
           </div>
         )}
+
+        <ConfirmModal
+          open={confirmLeave}
+          onClose={() => setConfirmLeave(false)}
+          onConfirm={onLeave}
+          title={open ? `Leave the queue with “${String(open.data.title)}”?` : 'Leave the queue?'}
+          description="You'll lose your place in line. You can ask again later, but you'll start at the back."
+          confirmText="Yes, leave"
+          cancelText="Stay in line"
+          loading={leaving}
+        />
 
         {import.meta.env.DEV && <DevTools role={user?.role ?? 'unknown'} />}
       </div>

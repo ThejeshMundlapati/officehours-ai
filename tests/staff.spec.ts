@@ -52,6 +52,7 @@ async function clearQueue(page: Page): Promise<void> {
   const leave = page.getByTestId('leave-button')
   if (await leave.isVisible().catch(() => false)) {
     await leave.click()
+    await page.getByRole('button', { name: 'Yes, leave' }).click()
     await expect(page.getByTestId('submit-form')).toBeVisible({ timeout: 15_000 })
   }
 }

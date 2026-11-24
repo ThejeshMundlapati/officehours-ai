@@ -1,5 +1,6 @@
-/** App name — replaced by the CLI during scaffolding */
-export const APP_NAME = 'officehours-ai'
+/** Display name, shown in the nav, <title>, and landing. (The deploy
+ *  subdomain is wrangler.toml `name`/`APP_NAME`, which is separate.) */
+export const APP_NAME = 'OfficeHours AI'
 
 /** Immutable app identity — data scope keys to this, so renames never
  *  strand your records.

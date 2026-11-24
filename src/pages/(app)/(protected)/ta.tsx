@@ -9,8 +9,9 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Inbox } from 'lucide-react'
 import { useMutations, useQuery, useUser } from 'deepspace'
-import { Badge, Button, useToast } from '@/components/ui'
+import { Badge, Button, EmptyState, useToast } from '@/components/ui'
 import { callAction } from '@/lib/actions'
 import { StaffOnlineList } from '@/components/StaffPresence'
 import {
@@ -94,8 +95,8 @@ export default function TaQueuePage() {
                   data-testid="ta-question"
                   className="rounded-lg border border-border bg-card p-5"
                 >
-                  <div className="mb-1 flex items-center justify-between gap-3">
-                    <h2 className="font-semibold">{r.data.title}</h2>
+                  <div className="mb-1 flex flex-wrap items-start justify-between gap-2">
+                    <h2 className="min-w-0 break-words font-semibold">{r.data.title}</h2>
                     <div className="flex shrink-0 items-center gap-2">
                       {r.data.aiFeedback === 'needs_help' && (
                         <Badge data-testid="ta-needs-help" variant="warning">
@@ -138,9 +139,11 @@ export default function TaQueuePage() {
         <h1 className="mb-6 text-3xl font-bold tracking-tight">TA queue</h1>
 
         {staffStatus === 'loading' ? (
-          <p data-testid="ta-loading" className="text-sm text-muted-foreground">
-            Loading&hellip;
-          </p>
+          <div data-testid="ta-loading" className="space-y-3" aria-busy="true">
+            <div className="h-12 animate-pulse rounded-lg bg-muted" />
+            <div className="h-28 animate-pulse rounded-lg bg-muted" />
+            <div className="h-28 animate-pulse rounded-lg bg-muted" />
+          </div>
         ) : !isStaff ? (
           <div data-testid="ta-not-staff" className="rounded-lg border border-border bg-card p-6">
             <p className="text-sm text-foreground">You&rsquo;re not on staff.</p>
@@ -164,7 +167,13 @@ export default function TaQueuePage() {
                 : `${open.length} open question${open.length === 1 ? '' : 's'}.`}
             </p>
             {open.length === 0 ? (
-              <div data-testid="ta-empty" />
+              <EmptyState
+                data-testid="ta-empty"
+                className="rounded-lg border border-dashed border-border"
+                icon={<Inbox />}
+                title="Nobody is waiting"
+                description="New questions appear here the moment a student joins the queue."
+              />
             ) : (
               <div data-testid="ta-queue" className="space-y-6">
                 {sections.groups.map(({ group, members }) => (

@@ -8,7 +8,8 @@
 
 import { useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { useQuery } from 'deepspace'
-import { Badge, Button, Input, Label, useToast, type BadgeProps } from '@/components/ui'
+import { Badge, Button, ConfirmModal, EmptyState, Input, Label, useToast, type BadgeProps } from '@/components/ui'
+import { FileText } from 'lucide-react'
 import { callAction } from '@/lib/actions'
 import { MATERIAL_SEARCH_QUERY_MAX, MATERIAL_TEXT_MAX_BYTES, validateMaterialInput } from '@/lib/materials'
 import type { Material, MaterialSearchHit, MaterialStatus } from '@/lib/types'
@@ -35,6 +36,7 @@ export default function MaterialsSection() {
   const [uploading, setUploading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [deletingId, setDeletingId] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState<{ id: string; filename: string } | null>(null)
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [hits, setHits] = useState<MaterialSearchHit[] | null>(null)
@@ -74,6 +76,7 @@ export default function MaterialsSection() {
     setDeletingId(id)
     const res = await callAction('deleteMaterial', { materialId: id })
     setDeletingId('')
+    setConfirmDelete(null)
     if (res.success) toast.success('Material deleted')
     else toast.error('Delete failed', res.error)
   }
@@ -122,9 +125,13 @@ export default function MaterialsSection() {
       </Button>
 
       {materials.length === 0 ? (
-        <p data-testid="materials-empty" className="mt-4 text-sm text-muted-foreground">
-          No materials uploaded yet.
-        </p>
+        <EmptyState
+          data-testid="materials-empty"
+          className="py-8"
+          icon={<FileText />}
+          title="No course materials yet"
+          description="Upload a syllabus, assignment spec, or FAQ (.md or .txt). The AI answers only from these files."
+        />
       ) : (
         <ul className="mt-4 divide-y divide-border">
           {materials.map((r) => (
@@ -144,7 +151,7 @@ export default function MaterialsSection() {
                   size="sm"
                   loading={deletingId === r.recordId}
                   disabled={deletingId === r.recordId}
-                  onClick={() => onDelete(r.recordId)}
+                  onClick={() => setConfirmDelete({ id: r.recordId, filename: String(r.data.filename) })}
                 >
                   Delete
                 </Button>
@@ -153,6 +160,16 @@ export default function MaterialsSection() {
           ))}
         </ul>
       )}
+
+      <ConfirmModal
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={() => confirmDelete && onDelete(confirmDelete.id)}
+        title={`Delete “${confirmDelete?.filename ?? ''}”?`}
+        description="It is removed from the knowledge base, so the AI can no longer cite it."
+        confirmText="Delete"
+        loading={!!deletingId}
+      />
 
       <form onSubmit={onSearch} className="mt-6 border-t border-border pt-5">
         <Label htmlFor="materials-query">Test search</Label>
